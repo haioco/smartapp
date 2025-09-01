@@ -7,10 +7,14 @@ block_cipher = None
 # Platform-specific binaries
 binaries = []
 if platform.system() == "Windows":
-    # Try to include rclone.exe if it exists in the same directory
-    rclone_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rclone.exe")
+    # Try to include rclone.exe if it exists in the current directory
+    rclone_path = os.path.join(os.getcwd(), "rclone.exe")
     if os.path.exists(rclone_path):
         binaries.append((rclone_path, '.'))
+    else:
+        # Fallback: try relative path
+        if os.path.exists("rclone.exe"):
+            binaries.append(("rclone.exe", '.'))
 
 a = Analysis(
     ['main_new.py'],
@@ -49,7 +53,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='HaioDriveClient',
+    name='S3DriveMounter',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
