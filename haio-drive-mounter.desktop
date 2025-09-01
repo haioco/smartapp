@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=HAIO Drive Mounter
+Comment=Mount cloud storage as local drives
+Exec=/home/devcloud/Documents/mine/haio/smarthaioapp/client/launch.sh
+Icon=folder-remote
+Terminal=false
+Categories=System;FileManager;Network;
+StartupNotify=true
+MimeType=x-scheme-handler/s3;
+Keywords=cloud;storage;mount;drive;s3;swift;

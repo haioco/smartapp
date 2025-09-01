@@ -1,0 +1,117 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # Triggers on version tags like v1.0.0
+  workflow_dispatch:  # Allows manual trigger from GitHub UI
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Download rclone for Windows
+      run: |
+        Invoke-WebRequest -Uri "https://downloads.rclone.org/rclone-current-windows-amd64.zip" -OutFile "rclone.zip"
+        Expand-Archive -Path "rclone.zip" -DestinationPath "."
+        $rcloneDir = Get-ChildItem -Directory -Name "rclone-*"
+        Copy-Item "$rcloneDir\rclone.exe" "."
+        Remove-Item "rclone.zip"
+        Remove-Item $rcloneDir -Recurse
+      shell: powershell
+    
+    - name: Build Windows executable
+      run: |
+        pyinstaller s3_mounter.spec --clean
+    
+    - name: Create Windows release archive
+      run: |
+        Compress-Archive -Path "dist\*" -DestinationPath "haio-drive-client-windows.zip"
+      shell: powershell
+    
+    - name: Upload Windows artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: haio-drive-client-windows
+        path: haio-drive-client-windows.zip
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y fuse
+    
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Download rclone for Linux
+      run: |
+        wget https://downloads.rclone.org/rclone-current-linux-amd64.zip
+        unzip rclone-current-linux-amd64.zip
+        cp rclone-*/rclone .
+        rm -rf rclone-current-linux-amd64.zip rclone-*
+        chmod +x rclone
+    
+    - name: Build Linux executable
+      run: |
+        pyinstaller s3_mounter.spec --clean
+    
+    - name: Create Linux release archive
+      run: |
+        tar -czf haio-drive-client-linux.tar.gz -C dist .
+    
+    - name: Upload Linux artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: haio-drive-client-linux
+        path: haio-drive-client-linux.tar.gz
+
+  release:
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+    - name: Download Windows artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: haio-drive-client-windows
+    
+    - name: Download Linux artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: haio-drive-client-linux
+    
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          haio-drive-client-windows.zip
+          haio-drive-client-linux.tar.gz
+        draft: false
+        prerelease: false
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

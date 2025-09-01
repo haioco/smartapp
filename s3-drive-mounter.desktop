@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=S3 Drive Mounter
+Comment=Mount S3 buckets as local drives
+Exec=/home/devcloud/Documents/mine/haio/smarthaioapp/client/launch.sh
+Icon=folder
+Terminal=false
+Categories=Utility;System;
+Keywords=S3;AWS;Mount;Drive;Cloud;Storage;

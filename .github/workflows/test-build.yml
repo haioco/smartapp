@@ -1,0 +1,83 @@
+name: Test Build
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+  push:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+jobs:
+  test-build-windows:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Download rclone for Windows
+      run: |
+        Invoke-WebRequest -Uri "https://downloads.rclone.org/rclone-current-windows-amd64.zip" -OutFile "rclone.zip"
+        Expand-Archive -Path "rclone.zip" -DestinationPath "."
+        $rcloneDir = Get-ChildItem -Directory -Name "rclone-*"
+        Copy-Item "$rcloneDir\rclone.exe" "."
+        Remove-Item "rclone.zip"
+        Remove-Item $rcloneDir -Recurse
+      shell: powershell
+    
+    - name: Test Windows build
+      run: |
+        pyinstaller s3_mounter.spec --clean
+        if (Test-Path "dist\S3DriveMounter.exe") {
+          Write-Host "✅ Windows build successful"
+        } else {
+          Write-Host "❌ Windows build failed"
+          exit 1
+        }
+      shell: powershell
+
+  test-build-linux:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y fuse
+    
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Download rclone for Linux
+      run: |
+        wget https://downloads.rclone.org/rclone-current-linux-amd64.zip
+        unzip rclone-current-linux-amd64.zip
+        cp rclone-*/rclone .
+        rm -rf rclone-current-linux-amd64.zip rclone-*
+        chmod +x rclone
+    
+    - name: Test Linux build
+      run: |
+        pyinstaller s3_mounter.spec --clean
+        if [ -f "dist/S3DriveMounter" ]; then
+          echo "✅ Linux build successful"
+        else
+          echo "❌ Linux build failed"
+          exit 1
+        fi
