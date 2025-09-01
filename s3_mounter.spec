@@ -53,7 +53,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='S3DriveMounter',
+    name='HaioSmartApp',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

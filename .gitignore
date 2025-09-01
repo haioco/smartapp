@@ -86,7 +86,7 @@ rclone
 *.app
 *.exe
 HaioDriveClient
-S3DriveMounter
+HaioSmartApp
 
 # Config files that might contain sensitive data
 tokens.json

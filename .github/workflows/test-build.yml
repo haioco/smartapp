@@ -36,7 +36,7 @@ jobs:
     - name: Test Windows build
       run: |
         pyinstaller s3_mounter.spec --clean
-        if (Test-Path "dist\S3DriveMounter.exe") {
+        if (Test-Path "dist\HaioSmartApp.exe") {
           Write-Host "✅ Windows build successful"
         } else {
           Write-Host "❌ Windows build failed"
@@ -75,7 +75,7 @@ jobs:
     - name: Test Linux build
       run: |
         pyinstaller s3_mounter.spec --clean
-        if [ -f "dist/S3DriveMounter" ]; then
+        if [ -f "dist/HaioSmartApp" ]; then
           echo "✅ Linux build successful"
         else
           echo "❌ Linux build failed"

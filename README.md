@@ -20,8 +20,8 @@ A cross-platform desktop application for mounting cloud storage as local drives 
 ### For End Users
 
 1. **Download** the latest release for your platform from the [Releases page](../../releases)
-2. **Windows**: Extract `haio-drive-client-windows.zip` and run `S3DriveMounter.exe`
-3. **Linux**: Extract `haio-drive-client-linux.tar.gz` and run `./S3DriveMounter`
+2. **Windows**: Extract `haio-drive-client-windows.zip` and run `HaioSmartApp.exe`
+3. **Linux**: Extract `haio-drive-client-linux.tar.gz` and run `./HaioSmartApp`
 
 ### For Developers
 
