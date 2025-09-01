@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy, QDialog, QDialogButtonBox, QFormLayout, QStatusBar,
     QListWidget, QListWidgetItem, QInputDialog
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QPropertyAnimation, QEasingCurve, QRect, QSize
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QPropertyAnimation, QEasingCurve, QRect, QSize, QMetaObject, Q_ARG
 from PyQt6.QtGui import QFont, QIcon, QPalette, QColor, QPixmap, QPainter, QLinearGradient, QBrush, QAction
 import requests
 
@@ -269,15 +269,59 @@ class RcloneManager:
     def unmount_bucket(self, mount_point: str) -> bool:
         """Unmount a bucket."""
         try:
+            if not os.path.exists(mount_point):
+                print(f"Mount point {mount_point} does not exist")
+                return True  # Consider it unmounted if it doesn't exist
+            
             if not self.is_mounted(mount_point):
+                print(f"Mount point {mount_point} is not mounted")
                 return True
             
-            # Try fusermount first, then fallback to umount
-            for cmd in [['fusermount', '-u', mount_point], ['umount', mount_point]]:
-                result = subprocess.run(cmd, capture_output=True, text=True)
-                if result.returncode == 0:
-                    return True
+            print(f"Attempting to unmount {mount_point}")
             
+            # Try different unmount commands based on platform
+            if platform.system() == "Linux":
+                # Try fusermount first (preferred for FUSE), then umount
+                commands = [
+                    ['fusermount', '-u', mount_point],
+                    ['fusermount3', '-u', mount_point],
+                    ['umount', mount_point]
+                ]
+            else:  # Windows
+                # For Windows, we need to kill the rclone process
+                commands = [['umount', mount_point]]
+            
+            for cmd in commands:
+                try:
+                    print(f"Trying command: {' '.join(cmd)}")
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                    if result.returncode == 0:
+                        print(f"Successfully unmounted {mount_point}")
+                        return True
+                    else:
+                        print(f"Command failed with code {result.returncode}: {result.stderr}")
+                except FileNotFoundError:
+                    print(f"Command not found: {cmd[0]}")
+                    continue
+                except subprocess.TimeoutExpired:
+                    print(f"Command timed out: {' '.join(cmd)}")
+                    continue
+            
+            # If all unmount commands failed, try to force unmount on Linux
+            if platform.system() == "Linux":
+                try:
+                    print("Trying force unmount...")
+                    result = subprocess.run(['umount', '-f', mount_point], 
+                                          capture_output=True, text=True, timeout=10)
+                    if result.returncode == 0:
+                        print(f"Force unmounted {mount_point}")
+                        return True
+                    else:
+                        print(f"Force unmount failed: {result.stderr}")
+                except Exception as e:
+                    print(f"Force unmount error: {e}")
+            
+            print(f"All unmount attempts failed for {mount_point}")
             return False
             
         except Exception as e:
@@ -491,6 +535,44 @@ class TokenManager:
             print(f"Error clearing tokens: {e}")
 
 
+class AuthWorker(QThread):
+    """Worker thread for authentication operations."""
+    finished = pyqtSignal(bool, str)  # success, username
+    
+    def __init__(self, api_client, username, password):
+        super().__init__()
+        self.api_client = api_client
+        self.username = username
+        self.password = password
+    
+    def run(self):
+        """Perform authentication in thread."""
+        try:
+            success = self.api_client.authenticate(self.username, self.password)
+            self.finished.emit(success, self.username if success else "")
+        except Exception as e:
+            print(f"Authentication error in worker: {e}")
+            self.finished.emit(False, "")
+
+
+class BucketWorker(QThread):
+    """Worker thread for loading buckets."""
+    finished = pyqtSignal(list)  # buckets list
+    
+    def __init__(self, api_client):
+        super().__init__()
+        self.api_client = api_client
+    
+    def run(self):
+        """Load buckets in thread."""
+        try:
+            buckets = self.api_client.list_containers()
+            self.finished.emit(buckets)
+        except Exception as e:
+            print(f"Error loading buckets: {e}")
+            self.finished.emit([])
+
+
 class MountWorker(QThread):
     """Worker thread for mount/unmount operations."""
     
@@ -506,10 +588,20 @@ class MountWorker(QThread):
         try:
             if self.operation == 'mount':
                 success = self.rclone_manager.mount_bucket(**self.kwargs)
-                message = "Mounted successfully" if success else "Mount failed"
+                message = "Mounted successfully" if success else "Mount failed - check logs for details"
             elif self.operation == 'unmount':
-                success = self.rclone_manager.unmount_bucket(self.kwargs['mount_point'])
-                message = "Unmounted successfully" if success else "Unmount failed"
+                mount_point = self.kwargs['mount_point']
+                success = self.rclone_manager.unmount_bucket(mount_point)
+                if success:
+                    message = "Unmounted successfully"
+                else:
+                    # Try to get more specific error information
+                    if not os.path.exists(mount_point):
+                        message = f"Mount point {mount_point} does not exist"
+                    elif not self.rclone_manager.is_mounted(mount_point):
+                        message = f"Mount point {mount_point} is not mounted"
+                    else:
+                        message = f"Failed to unmount {mount_point} - check if files are in use"
             else:
                 success = False
                 message = "Unknown operation"
@@ -517,7 +609,7 @@ class MountWorker(QThread):
             self.finished.emit(success, message)
             
         except Exception as e:
-            self.finished.emit(False, str(e))
+            self.finished.emit(False, f"Error: {str(e)}")
 
 
 class BucketWidget(QFrame):
@@ -1127,28 +1219,28 @@ class HaioDriveClient(QMainWindow):
         self.content_stack.setCurrentWidget(self.loading_page)
         self.status_bar.showMessage("Authenticating...")
         
-        # Perform authentication in thread
-        def authenticate():
-            success = self.api_client.authenticate(username, password)
+        # Create and start authentication worker
+        self.auth_worker = AuthWorker(self.api_client, username, password)
+        self.auth_worker.finished.connect(lambda success, user: self.on_auth_finished(success, user, password, remember))
+        self.auth_worker.start()
+    
+    def on_auth_finished(self, success: bool, username: str, password: str, remember: bool):
+        """Handle authentication completion."""
+        if success:
+            self.current_user = username
+            self.user_label.setText(f"Logged in as: {username}")
             
-            if success:
-                self.current_user = username
-                self.user_label.setText(f"Logged in as: {username}")
-                
-                # Setup rclone configuration
-                self.rclone_manager.setup_rclone_config(username, password)
-                
-                # Save credentials if requested
-                if remember:
-                    self.token_manager.save_token(username, self.api_client.token, password)
-                
-                # Load buckets
-                QTimer.singleShot(100, self.load_buckets)
-                
-            else:
-                QTimer.singleShot(100, lambda: self.show_login_error())
-        
-        threading.Thread(target=authenticate, daemon=True).start()
+            # Setup rclone configuration
+            self.rclone_manager.setup_rclone_config(username, password)
+            
+            # Save credentials if requested
+            if remember:
+                self.token_manager.save_token(username, self.api_client.token, password)
+            
+            # Load buckets
+            self.load_buckets()
+        else:
+            self.show_login_error()
     
     def show_login_error(self):
         """Show login error and return to login dialog."""
@@ -1160,11 +1252,15 @@ class HaioDriveClient(QMainWindow):
         """Load user's buckets."""
         self.status_bar.showMessage("Loading buckets...")
         
-        def fetch_buckets():
-            self.buckets = self.api_client.list_containers()
-            QTimer.singleShot(100, self.display_buckets)
-        
-        threading.Thread(target=fetch_buckets, daemon=True).start()
+        # Create and start bucket loading worker
+        self.bucket_worker = BucketWorker(self.api_client)
+        self.bucket_worker.finished.connect(self.on_buckets_loaded)
+        self.bucket_worker.start()
+    
+    def on_buckets_loaded(self, buckets: List[Dict]):
+        """Handle buckets loading completion."""
+        self.buckets = buckets
+        self.display_buckets()
     
     def display_buckets(self):
         """Display buckets in the UI."""
@@ -1304,6 +1400,25 @@ class HaioDriveClient(QMainWindow):
         self.user_label.setText("Not logged in")
         
         self.show_login_dialog()
+    
+    def closeEvent(self, event):
+        """Handle application close event."""
+        # Clean up any running workers
+        for worker in self.active_workers:
+            if worker.isRunning():
+                worker.terminate()
+                worker.wait(3000)  # Wait up to 3 seconds
+        
+        # Clean up auth and bucket workers if they exist
+        if hasattr(self, 'auth_worker') and self.auth_worker.isRunning():
+            self.auth_worker.terminate()
+            self.auth_worker.wait(3000)
+        
+        if hasattr(self, 'bucket_worker') and self.bucket_worker.isRunning():
+            self.bucket_worker.terminate()
+            self.bucket_worker.wait(3000)
+        
+        event.accept()
 
 
 def main():
