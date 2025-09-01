@@ -156,6 +156,78 @@ To modify the build process:
 - **Edit** `.github/workflows/test-build.yml` for CI testing
 - **Update** `s3_mounter.spec` for PyInstaller configuration
 
+## Contributing
+
+### For Developers
+
+#### Development Workflow
+
+1. **Fork** the repository and create a feature branch
+2. **Make changes** and test locally with `python main_new.py`
+3. **Build and test** executables with `./build.sh` or `build.bat`
+4. **Submit** a pull request to the `main` branch
+
+#### Creating Releases
+
+This project uses automated GitHub Actions workflows for building and releasing binaries:
+
+##### Release Process
+
+1. **Ensure all changes are committed and pushed to main**:
+   ```bash
+   git add .
+   git commit -m "feat: your changes"
+   git push origin main
+   ```
+
+2. **Create and push a version tag**:
+   ```bash
+   # Create a new version tag (semantic versioning)
+   git tag v1.3.0
+   
+   # Push the tag to trigger automated release
+   git push origin v1.3.0
+   ```
+
+3. **Automated build process will**:
+   - Build Windows executable (`HaioSmartApp.exe`) with bundled rclone
+   - Build Linux executable (`HaioSmartApp`) with bundled rclone
+   - Create GitHub release with both binaries
+   - Generate automatic release notes
+
+##### Manual Release Trigger
+
+You can also manually trigger a release from GitHub:
+1. Go to **Actions** tab in the repository
+2. Select **"Build and Release"** workflow
+3. Click **"Run workflow"** button
+4. Choose the branch and click **"Run workflow"**
+
+##### Release Workflow Details
+
+The release workflow (`.github/workflows/release.yml`) includes:
+- **Cross-platform builds** on Windows and Linux runners
+- **Automatic dependency management** (downloads latest rclone)
+- **Executable packaging** with PyInstaller
+- **GitHub release creation** with proper permissions
+- **Artifact uploads** for distribution
+
+##### Version Tags
+
+Use semantic versioning for tags:
+- `v1.0.0` - Major releases with breaking changes
+- `v1.1.0` - Minor releases with new features
+- `v1.1.1` - Patch releases with bug fixes
+
+##### Build Testing
+
+The test workflow (`.github/workflows/test-build.yml`) runs automatically on:
+- Pull requests to `main` or `develop` branches
+- Pushes to `main` or `develop` branches
+- Manual triggers from GitHub Actions
+
+This ensures all changes build successfully before merging.
+
 ## License
 
 This project is part of the Haio cloud storage ecosystem.
