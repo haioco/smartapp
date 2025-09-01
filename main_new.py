@@ -307,19 +307,9 @@ class RcloneManager:
                     print(f"Command timed out: {' '.join(cmd)}")
                     continue
             
-            # If all unmount commands failed, try to force unmount on Linux
+            # If unmount failed due to busy device, try additional strategies
             if platform.system() == "Linux":
-                try:
-                    print("Trying force unmount...")
-                    result = subprocess.run(['umount', '-f', mount_point], 
-                                          capture_output=True, text=True, timeout=10)
-                    if result.returncode == 0:
-                        print(f"Force unmounted {mount_point}")
-                        return True
-                    else:
-                        print(f"Force unmount failed: {result.stderr}")
-                except Exception as e:
-                    print(f"Force unmount error: {e}")
+                return self._handle_busy_unmount(mount_point)
             
             print(f"All unmount attempts failed for {mount_point}")
             return False
@@ -327,6 +317,71 @@ class RcloneManager:
         except Exception as e:
             print(f"Error unmounting {mount_point}: {e}")
             return False
+    
+    def _handle_busy_unmount(self, mount_point: str) -> bool:
+        """Handle unmount when device is busy."""
+        print(f"Mount point {mount_point} is busy, trying additional strategies...")
+        
+        # Check what processes are using the mount point
+        try:
+            print("Checking for processes using the mount point...")
+            result = subprocess.run(['lsof', '+D', mount_point], 
+                                  capture_output=True, text=True, timeout=5)
+            if result.returncode == 0 and result.stdout.strip():
+                print("Processes using the mount point:")
+                print(result.stdout)
+                
+                # Try to kill file manager processes that might be accessing the mount
+                self._kill_file_managers(mount_point)
+                
+                # Wait a moment for processes to exit
+                time.sleep(2)
+                
+                # Try unmount again
+                for cmd in [['fusermount', '-u', mount_point], ['umount', mount_point]]:
+                    try:
+                        print(f"Retrying: {' '.join(cmd)}")
+                        result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+                        if result.returncode == 0:
+                            print(f"Successfully unmounted {mount_point} after killing processes")
+                            return True
+                    except:
+                        continue
+                        
+        except FileNotFoundError:
+            print("lsof not available, skipping process check")
+        except Exception as e:
+            print(f"Error checking processes: {e}")
+        
+        # Try lazy unmount as last resort
+        try:
+            print("Trying lazy unmount...")
+            result = subprocess.run(['umount', '-l', mount_point], 
+                                  capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                print(f"Lazy unmounted {mount_point}")
+                return True
+            else:
+                print(f"Lazy unmount failed: {result.stderr}")
+        except Exception as e:
+            print(f"Lazy unmount error: {e}")
+        
+        print(f"All unmount strategies failed for {mount_point}")
+        return False
+    
+    def _kill_file_managers(self, mount_point: str):
+        """Kill common file manager processes that might be accessing the mount."""
+        file_managers = ['nautilus', 'thunar', 'dolphin', 'nemo', 'pcmanfm']
+        
+        for fm in file_managers:
+            try:
+                # Check if the file manager is running
+                result = subprocess.run(['pgrep', fm], capture_output=True, timeout=3)
+                if result.returncode == 0:
+                    print(f"Killing {fm} file manager...")
+                    subprocess.run(['pkill', fm], timeout=3)
+            except:
+                continue
     
     def is_mounted(self, mount_point: str) -> bool:
         """Check if a mount point is currently mounted."""
@@ -601,7 +656,16 @@ class MountWorker(QThread):
                     elif not self.rclone_manager.is_mounted(mount_point):
                         message = f"Mount point {mount_point} is not mounted"
                     else:
-                        message = f"Failed to unmount {mount_point} - check if files are in use"
+                        # Check if it's a "device busy" issue
+                        try:
+                            result = subprocess.run(['lsof', '+D', mount_point], 
+                                                  capture_output=True, text=True, timeout=3)
+                            if result.returncode == 0 and result.stdout.strip():
+                                message = f"Cannot unmount {mount_point}: files are being accessed by applications. Close any file managers or applications using files in this location and try again."
+                            else:
+                                message = f"Failed to unmount {mount_point}. Try closing all applications and file managers."
+                        except:
+                            message = f"Failed to unmount {mount_point}. The mount point may be busy - close any applications accessing files in this location."
             else:
                 success = False
                 message = "Unknown operation"
@@ -1353,12 +1417,47 @@ class HaioDriveClient(QMainWindow):
         if success:
             self.status_bar.showMessage("✓ Unmounted successfully")
         else:
-            self.status_bar.showMessage(f"✗ Unmount failed: {message}")
-            QMessageBox.warning(self, "Unmount Failed", f"Failed to unmount:\n{message}")
+            self.status_bar.showMessage(f"✗ Unmount failed")
+            
+            # Show helpful dialog for unmount failures
+            if "files are being accessed" in message or "busy" in message.lower():
+                self.show_unmount_help_dialog(message)
+            else:
+                QMessageBox.warning(self, "Unmount Failed", f"Failed to unmount:\n{message}")
         
         # Update widget status
         for widget in self.bucket_widgets:
             widget.update_mount_status()
+    
+    def show_unmount_help_dialog(self, error_message: str):
+        """Show helpful dialog for unmount issues."""
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle("Unmount Failed - Device Busy")
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        
+        dialog.setText("Cannot unmount because files are being accessed.")
+        
+        detailed_text = f"""Error details: {error_message}
+
+Common solutions:
+• Close any file managers or file explorers showing this location
+• Close any applications that have files open from this location  
+• Close any terminal windows with current directory in this location
+• Wait a moment and try again
+
+The system will automatically retry unmounting when files are no longer in use."""
+        
+        dialog.setDetailedText(detailed_text)
+        dialog.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Retry)
+        dialog.setDefaultButton(QMessageBox.StandardButton.Retry)
+        
+        result = dialog.exec()
+        if result == QMessageBox.StandardButton.Retry:
+            # Find the mount point and retry unmount
+            for widget in self.bucket_widgets:
+                if widget.is_mounted:
+                    self.unmount_bucket(widget.mount_point)
+                    break
     
     def toggle_auto_mount(self, bucket_name: str, enabled: bool):
         """Toggle auto-mount at boot for a bucket."""
