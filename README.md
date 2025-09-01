@@ -13,6 +13,7 @@ A cross-platform desktop application for mounting cloud storage as local drives 
 - **Threaded operations** for responsive UI
 - **Auto-mount at boot** with systemd integration
 - **Portable executables** with all dependencies included
+- **Smart unmount handling** with automatic busy device resolution
 
 ## Quick Start
 
