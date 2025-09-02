@@ -6,10 +6,11 @@ import platform
 import threading
 import time
 import configparser
+import requests
 from typing import Dict, List, Optional
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QGridLayout, QPushButton, QLineEdit, QLabel, QMessageBox, 
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QGridLayout, QPushButton, QLineEdit, QLabel, QMessageBox,
     QTextEdit, QProgressBar, QGroupBox, QFrame, QCheckBox,
     QScrollArea, QStackedWidget, QSplitter, QTabWidget,
     QTableWidget, QTableWidgetItem, QHeaderView, QSpacerItem,
@@ -17,9 +18,7 @@ from PyQt6.QtWidgets import (
     QListWidget, QListWidgetItem, QInputDialog
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QPropertyAnimation, QEasingCurve, QRect, QSize, QMetaObject, Q_ARG
-from PyQt6.QtGui import QFont, QIcon, QPalette, QColor, QPixmap, QPainter, QLinearGradient, QBrush, QAction
-import requests
-
+from PyQt6.QtGui import QFont, QIcon, QPalette, QColor, QPixmap, QPainter, QLinearGradient, QBrush, QAction, QPainterPath
 
 class ApiError(Exception):
     pass
@@ -66,10 +65,6 @@ class PasswordDialog(QDialog):
     def get_password(self):
         """Get the entered password."""
         return self.password_input.text()
-
-
-class ApiError(Exception):
-    pass
 
 
 class ApiClient:
@@ -523,19 +518,28 @@ WantedBy=default.target
         except Exception as e:
             print(f"Error removing systemd service: {e}")
             return False
+
+    def is_systemd_service_enabled(self, username: str, bucket_name: str) -> bool:
+        """Check if systemd service exists and is enabled for auto-mount. Linux only."""
+        if platform.system() != "Linux":
+            return False
             
-            # Stop and disable service
-            subprocess.run(['sudo', 'systemctl', 'stop', service_name], capture_output=True)
-            subprocess.run(['sudo', 'systemctl', 'disable', service_name], capture_output=True)
-            subprocess.run(['sudo', 'rm', f"{self.service_dir}/{service_name}"], capture_output=True)
-            subprocess.run(['sudo', 'systemctl', 'daemon-reload'], capture_output=True)
+        try:
+            service_name = f"haio-{username}-{bucket_name}.service"
             
-            return True
+            # Check if service file exists
+            service_path = f"{self.service_dir}/{service_name}"
+            if not os.path.exists(service_path):
+                return False
+            
+            # Check if service is enabled
+            result = subprocess.run(['systemctl', 'is-enabled', service_name], 
+                                  capture_output=True, text=True, timeout=5)
+            return result.returncode == 0 and result.stdout.strip() == 'enabled'
             
         except Exception as e:
-            print(f"Error removing systemd service: {e}")
+            print(f"Error checking systemd service: {e}")
             return False
-
 
 class TokenManager:
     """Manages authentication tokens persistently."""
@@ -771,6 +775,12 @@ class BucketWidget(QFrame):
         # Auto-mount checkbox
         self.auto_mount_cb = QCheckBox("Auto-mount at boot")
         self.auto_mount_cb.setStyleSheet("color: #34495e;")
+        
+        # Check current auto-mount status and set checkbox state
+        is_auto_mount_enabled = self.rclone_manager.is_systemd_service_enabled(
+            self.username, self.bucket_info['name'])
+        self.auto_mount_cb.setChecked(is_auto_mount_enabled)
+        
         self.auto_mount_cb.toggled.connect(self.on_auto_mount_changed)
         
         controls_layout.addWidget(self.status_label)
@@ -844,16 +854,58 @@ class LoginDialog(QDialog):
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Haio Drive Login")
-        self.setFixedSize(400, 300)
+        self.setWindowTitle("Haio Smart Solutions Login")
+        self.setFixedSize(500, 550)  # Made larger to accommodate content properly
         self.setModal(True)
         
         # Remove default window decorations and add custom styling
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         
+        # Variables for window dragging
+        self.drag_position = None
+        self.dragging = False
+        
+        # Store reference to parent for API client access
+        self.parent_window = parent
+        
+        # Authentication worker
+        self.auth_worker = None
+        
         self.setup_ui()
         self.setup_styling()
+        
+        # Center the dialog on screen
+        self.center_on_screen()
+    
+    def center_on_screen(self):
+        """Center the dialog on the screen."""
+        screen = QApplication.primaryScreen().geometry()
+        dialog_geometry = self.geometry()
+        x = (screen.width() - dialog_geometry.width()) // 2
+        y = (screen.height() - dialog_geometry.height()) // 2
+        self.move(x, y)
+    
+    def mousePressEvent(self, event):
+        """Handle mouse press for window dragging."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.dragging = True
+            self.drag_position = event.globalPosition().toPoint() - self.pos()
+            event.accept()
+    
+    def mouseMoveEvent(self, event):
+        """Handle mouse move for window dragging."""
+        if self.dragging and self.drag_position is not None:
+            if event.buttons() == Qt.MouseButton.LeftButton:
+                new_pos = event.globalPosition().toPoint() - self.drag_position
+                self.move(new_pos)
+                event.accept()
+    
+    def mouseReleaseEvent(self, event):
+        """Handle mouse release to stop dragging."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.dragging = False
+            event.accept()
     
     def setup_ui(self):
         main_layout = QVBoxLayout(self)
@@ -863,14 +915,46 @@ class LoginDialog(QDialog):
         self.main_frame = QFrame()
         self.main_frame.setObjectName("mainFrame")
         frame_layout = QVBoxLayout(self.main_frame)
-        frame_layout.setContentsMargins(30, 30, 30, 30)
-        frame_layout.setSpacing(20)
+        frame_layout.setContentsMargins(40, 30, 40, 30)  # Balanced margins
+        frame_layout.setSpacing(15)  # Reduced spacing for better fit
         
-        # Logo/Title
-        title = QLabel("Haio Drive")
+        # Logo/Title Section
+        logo_layout = QVBoxLayout()
+        logo_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        logo_layout.setSpacing(8)
+        
+        # Load and display the logo
+        logo_label = QLabel()
+        logo_path = os.path.join(os.path.dirname(__file__), "haio-logo.png")
+        if os.path.exists(logo_path):
+            pixmap = QPixmap(logo_path)
+            if not pixmap.isNull():
+                # Scale the logo to appropriate size
+                scaled_pixmap = pixmap.scaled(50, 50, Qt.AspectRatioMode.KeepAspectRatio, 
+                                            Qt.TransformationMode.SmoothTransformation)
+                logo_label.setPixmap(scaled_pixmap)
+                logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                # Make logo background transparent
+                logo_label.setStyleSheet("background: transparent; border: none;")
+            else:
+                # Fallback if image can't be loaded
+                logo_label.setText("🔗")
+                logo_label.setStyleSheet("font-size: 32px; background: transparent; color: #4CAF50;")
+                logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        else:
+            # Fallback icon
+            logo_label.setText("🔗")
+            logo_label.setStyleSheet("font-size: 32px; background: transparent; color: #4CAF50;")
+            logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        logo_layout.addWidget(logo_label)
+        
+        title = QLabel("Haio Smart Solutions")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setObjectName("title")
-        frame_layout.addWidget(title)
+        logo_layout.addWidget(title)
+        
+        frame_layout.addLayout(logo_layout)
         
         subtitle = QLabel("Connect to your cloud storage")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -879,41 +963,76 @@ class LoginDialog(QDialog):
         
         frame_layout.addSpacing(20)
         
-        # Form
-        form_layout = QFormLayout()
-        form_layout.setSpacing(15)
+        # Form section with clear separation
+        form_widget = QWidget()
+        form_layout = QVBoxLayout(form_widget)
+        form_layout.setSpacing(12)  # Consistent spacing between form elements
+        form_layout.setContentsMargins(10, 10, 10, 10)  # Reduced margins
         
+        # Username section
+        username_label = QLabel("Username:")
+        username_label.setObjectName("fieldLabel")
+        username_label.setFixedHeight(20)  # Ensure label has enough height
         self.username_input = QLineEdit()
         self.username_input.setPlaceholderText("Enter your username")
         self.username_input.setObjectName("input")
+        # Use minimum height so it scales with DPI/themes but never gets too small
+        self.username_input.setMinimumHeight(40)
+        self.username_input.setFixedHeight(40)  # Fixed height for consistency
+        self.username_input.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         
+        form_layout.addWidget(username_label)
+        form_layout.addWidget(self.username_input)
+        form_layout.addSpacing(15)  # Clear separation between sections
+        
+        # Password section
+        password_label = QLabel("Password:")
+        password_label.setObjectName("fieldLabel")
+        password_label.setFixedHeight(20)  # Ensure label has enough height
         self.password_input = QLineEdit()
         self.password_input.setPlaceholderText("Enter your password")
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
         self.password_input.setObjectName("input")
+        self.password_input.setMinimumHeight(40)
+        self.password_input.setFixedHeight(40)  # Fixed height for consistency
+        self.password_input.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         
+        form_layout.addWidget(password_label)
+        form_layout.addWidget(self.password_input)
+        form_layout.addSpacing(10)  # Space before checkbox
+        
+        # Remember me checkbox
         self.remember_cb = QCheckBox("Remember me")
         self.remember_cb.setObjectName("checkbox")
+        self.remember_cb.setFixedHeight(25)  # Ensure checkbox has proper height
+        form_layout.addWidget(self.remember_cb)
         
-        form_layout.addRow("Username:", self.username_input)
-        form_layout.addRow("Password:", self.password_input)
-        form_layout.addRow("", self.remember_cb)
+        # Error message label (initially hidden)
+        self.error_label = QLabel("")
+        self.error_label.setObjectName("errorLabel")
+        self.error_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.error_label.setWordWrap(True)
+        self.error_label.hide()  # Initially hidden
+        form_layout.addWidget(self.error_label)
+
+        frame_layout.addWidget(form_widget)
         
-        frame_layout.addLayout(form_layout)
-        
-        frame_layout.addSpacing(10)
+        frame_layout.addSpacing(15)
         
         # Buttons
         button_layout = QHBoxLayout()
+        button_layout.setSpacing(15)
         
         self.cancel_btn = QPushButton("Cancel")
         self.cancel_btn.setObjectName("cancelButton")
+        self.cancel_btn.setFixedHeight(42)  # Consistent button height
         self.cancel_btn.clicked.connect(self.reject)
         
         self.login_btn = QPushButton("Login")
         self.login_btn.setObjectName("loginButton")
+        self.login_btn.setFixedHeight(42)  # Consistent button height
         self.login_btn.setDefault(True)
-        self.login_btn.clicked.connect(self.accept)
+        self.login_btn.clicked.connect(self.handle_login)  # Changed to handle_login method
         
         button_layout.addWidget(self.cancel_btn)
         button_layout.addWidget(self.login_btn)
@@ -923,7 +1042,91 @@ class LoginDialog(QDialog):
         main_layout.addWidget(self.main_frame)
         
         # Connect Enter key to login
-        self.password_input.returnPressed.connect(self.accept)
+        self.password_input.returnPressed.connect(self.handle_login)  # Changed to handle_login method
+    
+    def handle_login(self):
+        """Handle login button click with validation and authentication."""
+        # Clear any previous error
+        self.hide_error()
+        
+        # Get credentials
+        username = self.username_input.text().strip()
+        password = self.password_input.text()
+        
+        # Basic validation
+        if not username:
+            self.show_error("Please enter your username.")
+            return
+            
+        if not password:
+            self.show_error("Please enter your password.")
+            return
+        
+        # Show loading state
+        self.set_loading_state(True)
+        
+        # Start authentication in background thread
+        if self.parent_window and hasattr(self.parent_window, 'api_client'):
+            self.auth_worker = AuthWorker(self.parent_window.api_client, username, password)
+            self.auth_worker.finished.connect(self.on_auth_finished)
+            self.auth_worker.start()
+        else:
+            # Fallback: create temporary API client
+            temp_api_client = ApiClient()
+            self.auth_worker = AuthWorker(temp_api_client, username, password)
+            self.auth_worker.finished.connect(self.on_auth_finished)
+            self.auth_worker.start()
+    
+    def on_auth_finished(self, success: bool, username: str):
+        """Handle authentication completion."""
+        self.set_loading_state(False)
+        
+        if success:
+            # Authentication successful - close dialog and accept
+            self.accept()
+        else:
+            # Authentication failed - show error
+            self.show_error("Invalid username or password. Please try again.")
+    
+    def set_loading_state(self, loading: bool):
+        """Set the loading state of the login button."""
+        if loading:
+            self.login_btn.setText("Logging in...")
+            self.login_btn.setEnabled(False)
+            self.cancel_btn.setEnabled(False)
+            self.username_input.setEnabled(False)
+            self.password_input.setEnabled(False)
+            self.remember_cb.setEnabled(False)
+        else:
+            self.login_btn.setText("Login")
+            self.login_btn.setEnabled(True)
+            self.cancel_btn.setEnabled(True)
+            self.username_input.setEnabled(True)
+            self.password_input.setEnabled(True)
+            self.remember_cb.setEnabled(True)
+    
+    def show_error(self, message: str):
+        """Show error message in the dialog."""
+        self.error_label.setText(message)
+        self.error_label.show()
+        
+        # Briefly highlight the error with animation
+        self.error_label.setStyleSheet("""
+            QLabel#errorLabel {
+                color: #e74c3c;
+                background-color: #fdf2f2;
+                border: 1px solid #f5c6cb;
+                border-radius: 6px;
+                padding: 8px;
+                margin: 5px 0px;
+                font-size: 12px;
+            }
+        """)
+    
+    def hide_error(self):
+        """Hide error message."""
+        self.error_label.hide()
+        self.error_label.setText("")
     
     def setup_styling(self):
         self.setStyleSheet("""
@@ -938,32 +1141,80 @@ class LoginDialog(QDialog):
             }
             
             QLabel#title {
-                font-size: 24px;
+                font-size: 22px;
                 font-weight: bold;
                 color: #2c3e50;
                 margin-bottom: 5px;
+                padding: 5px 0px;
             }
             
             QLabel#subtitle {
-                font-size: 14px;
+                font-size: 13px;
                 color: #7f8c8d;
+                padding: 2px 0px;
+            }
+            
+            QLabel#fieldLabel {
+                color: #2c3e50;
+                font-weight: bold;
+                font-size: 13px;
+                margin-bottom: 3px;
+                padding: 3px 2px;
+                background-color: transparent;
+                min-height: 20px;
+                max-height: 20px;
             }
             
             QLineEdit#input {
                 border: 2px solid #e0e0e0;
                 border-radius: 8px;
-                padding: 12px;
+                padding: 10px 12px;
                 font-size: 14px;
                 background-color: #fafafa;
+                color: #2c3e50;
+                margin: 1px 0px;
+                min-height: 20px;
+                max-height: 40px;
             }
             
             QLineEdit#input:focus {
                 border-color: #4CAF50;
                 background-color: white;
+                outline: none;
             }
             
             QCheckBox#checkbox {
                 color: #34495e;
+                font-size: 13px;
+                margin-top: 3px;
+                padding: 5px 0px;
+                spacing: 8px;
+                min-height: 25px;
+                max-height: 25px;
+            }
+            
+            QCheckBox#checkbox::indicator {
+                width: 16px;
+                height: 16px;
+                border: 2px solid #e0e0e0;
+                border-radius: 4px;
+                background-color: white;
+                margin-right: 8px;
+            }
+            
+            QCheckBox#checkbox::indicator:checked {
+                background-color: #4CAF50;
+                border-color: #4CAF50;
+                image: url(none);
+            }
+            
+            QLabel#errorLabel {
+                color: #e74c3c;
+                background-color: #fdf2f2;
+                border: 1px solid #f5c6cb;
+                border-radius: 6px;
+                padding: 8px;
+                margin: 5px 0px;
                 font-size: 12px;
             }
             
@@ -976,10 +1227,16 @@ class LoginDialog(QDialog):
                 font-size: 14px;
                 font-weight: bold;
                 min-width: 100px;
+                min-height: 42px;
+                max-height: 42px;
             }
             
             QPushButton#loginButton:hover {
                 background-color: #45a049;
+            }
+            
+            QPushButton#loginButton:pressed {
+                background-color: #3d8b40;
             }
             
             QPushButton#cancelButton {
@@ -990,11 +1247,18 @@ class LoginDialog(QDialog):
                 padding: 12px 24px;
                 font-size: 14px;
                 min-width: 100px;
+                min-height: 42px;
+                max-height: 42px;
             }
             
             QPushButton#cancelButton:hover {
                 border-color: #bdc3c7;
                 color: #34495e;
+                background-color: #f8f9fa;
+            }
+            
+            QPushButton#cancelButton:pressed {
+                background-color: #e9ecef;
             }
         """)
     
@@ -1016,6 +1280,9 @@ class HaioDriveClient(QMainWindow):
         self.rclone_manager = RcloneManager()
         self.token_manager = TokenManager()
         
+        # Set application icon
+        self.set_application_icon()
+        
         # Check dependencies on startup
         self.check_dependencies()
         
@@ -1030,7 +1297,64 @@ class HaioDriveClient(QMainWindow):
         self.setup_styling()
         
         # Auto-login if credentials are saved
+        # Don't show window initially - show only after login
         self.try_auto_login()
+    
+    def set_application_icon(self):
+        """Set the application icon for window and taskbar."""
+        try:
+            # Try to load the logo file first
+            logo_path = os.path.join(os.path.dirname(__file__), "haio-logo.png")
+            
+            if os.path.exists(logo_path):
+                # Use the actual logo file
+                icon = QIcon(logo_path)
+            else:
+                # Create a fallback icon programmatically
+                icon = self.create_fallback_icon()
+            
+            # Set icon for the application and window
+            self.setWindowIcon(icon)
+            QApplication.instance().setWindowIcon(icon)
+            
+        except Exception as e:
+            print(f"Error setting application icon: {e}")
+            # Create a simple fallback icon
+            self.setWindowIcon(self.create_simple_fallback_icon())
+    
+    def create_fallback_icon(self):
+        """Create a fallback icon with Haio branding."""
+        # Create a 64x64 icon
+        pixmap = QPixmap(64, 64)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # Create gradient background
+        gradient = QLinearGradient(0, 0, 64, 64)
+        gradient.setColorAt(0, QColor("#4CAF50"))
+        gradient.setColorAt(1, QColor("#45a049"))
+        
+        # Draw circle background
+        painter.setBrush(QBrush(gradient))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(2, 2, 60, 60)
+        
+        # Draw letter "H" in white
+        painter.setPen(QColor(Qt.GlobalColor.white))
+        font = QFont("Arial", 24, QFont.Weight.Bold)
+        painter.setFont(font)
+        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "H")
+        
+        painter.end()
+        return QIcon(pixmap)
+    
+    def create_simple_fallback_icon(self):
+        """Create a very simple fallback icon."""
+        pixmap = QPixmap(32, 32)
+        pixmap.fill(QColor("#4CAF50"))
+        return QIcon(pixmap)
     
     def check_dependencies(self):
         """Check if all required dependencies are available."""
@@ -1070,10 +1394,60 @@ class HaioDriveClient(QMainWindow):
         
         event.accept()
     
+    def set_application_icon(self):
+        """Set the application icon from logo file or create a default one."""
+        # Try to load the Haio logo
+        logo_path = os.path.join(os.path.dirname(__file__), "haio-logo.png")
+        
+        if os.path.exists(logo_path):
+            # Use the existing logo file
+            icon = QIcon(logo_path)
+            self.setWindowIcon(icon)
+            # Also set it as application icon for taskbar/dock
+            QApplication.instance().setWindowIcon(icon)
+        else:
+            # Create a simple default icon if logo file doesn't exist
+            self.create_default_icon()
+    
+    def create_default_icon(self):
+        """Create a default icon with the Haio colors and branding."""
+        # Create a 64x64 pixmap for the icon
+        pixmap = QPixmap(64, 64)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # Create gradient background
+        gradient = QLinearGradient(0, 0, 64, 64)
+        gradient.setColorAt(0, QColor("#4CAF50"))  # Haio green
+        gradient.setColorAt(1, QColor("#45a049"))  # Darker green
+        
+        # Draw circular background
+        painter.setBrush(QBrush(gradient))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(2, 2, 60, 60)
+        
+        # Draw "H" letter in white
+        painter.setPen(QColor("white"))
+        font = QFont("Arial", 28, QFont.Weight.Bold)
+        painter.setFont(font)
+        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "H")
+        
+        painter.end()
+        
+        # Set the icon
+        icon = QIcon(pixmap)
+        self.setWindowIcon(icon)
+        QApplication.instance().setWindowIcon(icon)
+    
     def setup_ui(self):
-        self.setWindowTitle("Haio Drive Client")
+        self.setWindowTitle("Haio Smart Solutions Client")
         self.setMinimumSize(800, 600)
         self.resize(1000, 700)
+        
+        # Set application icon
+        self.set_application_icon()
         
         # Central widget
         central_widget = QWidget()
@@ -1115,22 +1489,73 @@ class HaioDriveClient(QMainWindow):
         header_layout.setContentsMargins(20, 0, 20, 0)
         
         # Logo and title
-        title_layout = QVBoxLayout()
+        title_layout = QHBoxLayout()
+        title_layout.setSpacing(15)
         
-        app_title = QLabel("Haio Drive Client")
+        # Add logo with better handling
+        logo_container = QFrame()
+        logo_container.setFixedSize(64, 64)
+        logo_container.setObjectName("logoContainer")
+        logo_layout = QVBoxLayout(logo_container)
+        logo_layout.setContentsMargins(8, 8, 8, 8)
+        
+        logo_label = QLabel()
+        logo_path = os.path.join(os.path.dirname(__file__), "haio-logo.png")
+        
+        if os.path.exists(logo_path):
+            pixmap = QPixmap(logo_path)
+            if not pixmap.isNull():
+                # Create a circular mask for the logo to remove white background
+                masked_pixmap = self.create_circular_logo(pixmap, 48)
+                logo_label.setPixmap(masked_pixmap)
+                logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            else:
+                # Fallback to icon text
+                logo_label.setText("🔗")
+                logo_label.setStyleSheet("font-size: 24px; color: white;")
+                logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        else:
+            # Fallback to icon text with better styling
+            logo_label.setText("H")
+            logo_label.setStyleSheet("""
+                font-size: 28px; 
+                color: white; 
+                font-weight: bold; 
+                background-color: rgba(255, 255, 255, 0.2);
+                border-radius: 24px;
+                padding: 8px;
+            """)
+            logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            logo_label.setFixedSize(48, 48)
+        
+        logo_layout.addWidget(logo_label)
+        title_layout.addWidget(logo_container)
+        
+        # Title and user info with improved styling
+        text_layout = QVBoxLayout()
+        text_layout.setSpacing(4)
+        
+        app_title = QLabel("Haio Smart Solutions")
         app_title.setObjectName("appTitle")
         
         self.user_label = QLabel("Not logged in")
         self.user_label.setObjectName("userLabel")
         
-        title_layout.addWidget(app_title)
-        title_layout.addWidget(self.user_label)
-        title_layout.addStretch()
+        text_layout.addWidget(app_title)
+        text_layout.addWidget(self.user_label)
+        text_layout.addStretch()
+        
+        title_layout.addLayout(text_layout)
         
         header_layout.addLayout(title_layout)
         header_layout.addStretch()
         
-        # Action buttons
+        # Action buttons with improved styling
+        button_container = QWidget()
+        button_layout = QHBoxLayout(button_container)
+        button_layout.setSpacing(10)
+        button_layout.setContentsMargins(0, 0, 0, 0)
+        
         self.refresh_btn = QPushButton("🔄 Refresh")
         self.refresh_btn.setObjectName("headerButton")
         self.refresh_btn.clicked.connect(self.refresh_buckets)
@@ -1139,10 +1564,36 @@ class HaioDriveClient(QMainWindow):
         self.logout_btn.setObjectName("headerButton")
         self.logout_btn.clicked.connect(self.logout)
         
-        header_layout.addWidget(self.refresh_btn)
-        header_layout.addWidget(self.logout_btn)
+        button_layout.addWidget(self.refresh_btn)
+        button_layout.addWidget(self.logout_btn)
+        
+        header_layout.addWidget(button_container)
         
         parent_layout.addWidget(header)
+    
+    def create_circular_logo(self, pixmap, size):
+        """Create a circular version of the logo to remove background."""
+        # Scale pixmap to desired size
+        scaled_pixmap = pixmap.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio, 
+                                     Qt.TransformationMode.SmoothTransformation)
+        
+        # Create circular mask
+        circular_pixmap = QPixmap(size, size)
+        circular_pixmap.fill(Qt.GlobalColor.transparent)
+        
+        painter = QPainter(circular_pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # Set circular clipping region
+        path = QPainterPath()
+        path.addEllipse(0, 0, size, size)
+        painter.setClipPath(path)
+        
+        # Draw the scaled pixmap within the circular clip
+        painter.drawPixmap(0, 0, scaled_pixmap)
+        
+        painter.end()
+        return circular_pixmap
     
     def create_loading_page(self):
         """Create loading page."""
@@ -1204,32 +1655,46 @@ class HaioDriveClient(QMainWindow):
             QFrame#header {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #4CAF50, stop:1 #45a049);
-                border-bottom: 2px solid #3d8b40;
+                border-bottom: 3px solid #3d8b40;
+            }
+            
+            QFrame#logoContainer {
+                background-color: rgba(255, 255, 255, 0.1);
+                border-radius: 32px;
+                border: 2px solid rgba(255, 255, 255, 0.2);
             }
             
             QLabel#appTitle {
                 color: white;
-                font-size: 18px;
+                font-size: 20px;
                 font-weight: bold;
             }
             
             QLabel#userLabel {
                 color: #e8f5e8;
-                font-size: 12px;
+                font-size: 13px;
+                font-weight: 500;
             }
             
             QPushButton#headerButton {
-                background-color: rgba(255, 255, 255, 0.2);
+                background-color: rgba(255, 255, 255, 0.15);
                 color: white;
-                border: 1px solid rgba(255, 255, 255, 0.3);
-                border-radius: 6px;
-                padding: 8px 16px;
+                border: 2px solid rgba(255, 255, 255, 0.3);
+                border-radius: 8px;
+                padding: 10px 16px;
                 font-weight: bold;
+                font-size: 13px;
                 margin: 0 2px;
+                min-width: 90px;
             }
             
             QPushButton#headerButton:hover {
-                background-color: rgba(255, 255, 255, 0.3);
+                background-color: rgba(255, 255, 255, 0.25);
+                border-color: rgba(255, 255, 255, 0.5);
+            }
+            
+            QPushButton#headerButton:pressed {
+                background-color: rgba(255, 255, 255, 0.1);
             }
             
             QLabel#loadingLabel {
@@ -1264,9 +1729,12 @@ class HaioDriveClient(QMainWindow):
     
     def try_auto_login(self):
         """Try to automatically login with saved credentials."""
+        # Start with loading page first
+        self.content_stack.setCurrentWidget(self.loading_page)
+        
         # For now, show login dialog immediately
-        # In production, you might want to check for saved tokens first
-        self.show_login_dialog()
+        # In the future, you could check for saved tokens here
+        QTimer.singleShot(100, self.show_login_dialog)  # Small delay to show loading briefly
     
     def show_login_dialog(self):
         """Show the login dialog."""
@@ -1274,19 +1742,32 @@ class HaioDriveClient(QMainWindow):
         
         if dialog.exec() == QDialog.DialogCode.Accepted:
             credentials = dialog.get_credentials()
-            self.login(credentials['username'], credentials['password'], credentials['remember'])
+            # Authentication already happened in the dialog, so we can proceed directly
+            self.on_auth_finished(True, credentials['username'], credentials['password'], credentials['remember'])
         else:
-            self.close()
+            # User cancelled login - exit the application completely
+            QApplication.quit()  # This should terminate the application properly
     
     def login(self, username: str, password: str, remember: bool = False):
-        """Perform login."""
+        """Perform login setup after successful authentication."""
         self.content_stack.setCurrentWidget(self.loading_page)
-        self.status_bar.showMessage("Authenticating...")
+        self.status_bar.showMessage("Setting up your account...")
         
-        # Create and start authentication worker
-        self.auth_worker = AuthWorker(self.api_client, username, password)
-        self.auth_worker.finished.connect(lambda success, user: self.on_auth_finished(success, user, password, remember))
-        self.auth_worker.start()
+        self.current_user = username
+        self.user_label.setText(f"Logged in as: {username}")
+        
+        # Setup rclone configuration
+        self.rclone_manager.setup_rclone_config(username, password)
+        
+        # Save credentials if requested
+        if remember:
+            self.token_manager.save_token(username, self.api_client.token, password)
+        
+        # Show main window after successful login
+        self.show()
+        
+        # Load buckets
+        self.load_buckets()
     
     def on_auth_finished(self, success: bool, username: str, password: str, remember: bool):
         """Handle authentication completion."""
@@ -1300,6 +1781,9 @@ class HaioDriveClient(QMainWindow):
             # Save credentials if requested
             if remember:
                 self.token_manager.save_token(username, self.api_client.token, password)
+            
+            # Show main window after successful login
+            self.show()
             
             # Load buckets
             self.load_buckets()
@@ -1524,13 +2008,13 @@ def main():
     app = QApplication(sys.argv)
     
     # Set application properties
-    app.setApplicationName("Haio Drive Client")
+    app.setApplicationName("Haio Smart Solutions Client")
     app.setApplicationVersion("2.0")
     app.setOrganizationName("Haio")
     
-    # Create and show main window
+    # Create main window (but don't show it yet)
     window = HaioDriveClient()
-    window.show()
+    # Window will be shown after successful login
     
     sys.exit(app.exec())
 

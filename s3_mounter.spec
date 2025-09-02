@@ -20,7 +20,10 @@ a = Analysis(
     ['main_new.py'],
     pathex=[],
     binaries=binaries,
-    datas=[],
+    datas=[
+        ('haio-logo.png', '.'),
+        ('haio-logo.svg', '.'),
+    ],
     hiddenimports=[
         'PyQt6.QtCore',
         'PyQt6.QtGui', 
