@@ -137,29 +137,48 @@ class RcloneManager:
             self.config_dir = os.path.join(self.home_dir, ".config", "rclone")
             self.cache_dir = os.path.join(self.home_dir, ".cache", "rclone")
             self.service_dir = "/etc/systemd/system"
-            self.rclone_executable = "rclone"
+            self.rclone_executable = self._find_rclone_executable()
         
         self.config_path = os.path.join(self.config_dir, "rclone.conf")
         os.makedirs(self.config_dir, exist_ok=True)
         os.makedirs(self.cache_dir, exist_ok=True)
     
     def _find_rclone_executable(self):
-        """Find rclone executable on Windows."""
-        # Common locations for rclone on Windows
-        possible_paths = [
-            "rclone.exe",  # If in PATH
-            os.path.join(os.path.dirname(sys.executable), "rclone.exe"),  # Same dir as python
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "rclone.exe"),  # Same dir as app
-            "C:\\Program Files\\rclone\\rclone.exe",
-            "C:\\Program Files (x86)\\rclone\\rclone.exe",
-            os.path.join(self.home_dir, "rclone", "rclone.exe"),
-        ]
+        """Find rclone executable with priority to bundled version."""
+        if platform.system() == "Windows":
+            # Check for bundled rclone first (in same directory as executable)
+            possible_paths = [
+                os.path.join(os.path.dirname(sys.executable), "rclone.exe"),  # Bundled with app
+                os.path.join(os.path.dirname(os.path.abspath(__file__)), "rclone.exe"),  # Same dir as script
+                "rclone.exe",  # If in PATH
+                "C:\\Program Files\\rclone\\rclone.exe",
+                "C:\\Program Files (x86)\\rclone\\rclone.exe",
+                os.path.join(self.home_dir, "rclone", "rclone.exe"),
+            ]
+        else:  # Linux/Unix
+            possible_paths = [
+                os.path.join(os.path.dirname(sys.executable), "rclone"),  # Bundled with app
+                os.path.join(os.path.dirname(os.path.abspath(__file__)), "rclone"),  # Same dir as script
+                "rclone",  # If in PATH
+                "/usr/local/bin/rclone",
+                "/usr/bin/rclone",
+                os.path.join(self.home_dir, ".local/bin/rclone"),
+            ]
         
         for path in possible_paths:
-            if os.path.isfile(path) or (path == "rclone.exe" and self._check_path_executable("rclone")):
+            if os.path.isfile(path):
+                if platform.system() != "Windows":
+                    # Make sure it's executable on Unix systems
+                    try:
+                        os.chmod(path, 0o755)
+                    except:
+                        pass
+                return path
+            elif path.endswith(("rclone.exe", "rclone")) and self._check_path_executable(path):
                 return path
         
-        return "rclone.exe"  # Fallback, assume it's in PATH
+        # Fallback
+        return "rclone.exe" if platform.system() == "Windows" else "rclone"
     
     def _check_path_executable(self, executable):
         """Check if executable is available in PATH."""
@@ -198,9 +217,90 @@ class RcloneManager:
                 r"C:\Program Files\WinFsp\bin\launchctl-x64.exe"
             ]
             if not any(os.path.exists(path) for path in winfsp_paths):
-                issues.append("WinFsp is not installed (download from: https://github.com/billziss-gh/winfsp/releases)")
+                # Check if we have bundled WinFsp installer
+                bundled_installer = self._find_bundled_winfsp_installer()
+                if bundled_installer:
+                    issues.append(f"WinFsp needs to be installed. Installer available at: {bundled_installer}")
+                else:
+                    issues.append("WinFsp is not installed (download from: https://github.com/billziss-gh/winfsp/releases)")
         
         return issues
+    
+    def _find_bundled_winfsp_installer(self):
+        """Find bundled WinFsp installer."""
+        if platform.system() != "Windows":
+            return None
+            
+        possible_locations = [
+            os.path.join(os.path.dirname(sys.executable), "winfsp-installer.msi"),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "winfsp-installer.msi"),
+            "winfsp-installer.msi"
+        ]
+        
+        for location in possible_locations:
+            if os.path.exists(location):
+                return location
+        
+        return None
+    
+    def install_winfsp(self, parent_widget=None):
+        """Install WinFsp using bundled installer."""
+        if platform.system() != "Windows":
+            return False
+            
+        installer_path = self._find_bundled_winfsp_installer()
+        if not installer_path:
+            return False
+            
+        try:
+            from PyQt6.QtWidgets import QMessageBox
+            
+            if parent_widget:
+                reply = QMessageBox.question(
+                    parent_widget,
+                    "Install WinFsp",
+                    "WinFsp is required for mounting cloud storage on Windows.\n\n"
+                    "Do you want to install it now? This will require administrator privileges.",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.Yes
+                )
+                
+                if reply != QMessageBox.StandardButton.Yes:
+                    return False
+            
+            # Run the MSI installer with elevated privileges
+            result = subprocess.run([
+                "msiexec", "/i", installer_path, "/quiet", "/norestart"
+            ], capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                if parent_widget:
+                    QMessageBox.information(
+                        parent_widget,
+                        "Installation Complete",
+                        "WinFsp has been installed successfully!\n\n"
+                        "Please restart the application to use the mounting features."
+                    )
+                return True
+            else:
+                if parent_widget:
+                    QMessageBox.warning(
+                        parent_widget,
+                        "Installation Failed",
+                        f"Failed to install WinFsp.\n\n"
+                        f"Error: {result.stderr}\n\n"
+                        "You may need to run the installer manually with administrator privileges."
+                    )
+                return False
+                
+        except Exception as e:
+            if parent_widget:
+                QMessageBox.critical(
+                    parent_widget,
+                    "Installation Error",
+                    f"An error occurred while installing WinFsp:\n\n{str(e)}"
+                )
+            return False
     
     def setup_rclone_config(self, username: str, password: str):
         """Setup rclone configuration for the user."""
@@ -1361,6 +1461,42 @@ class HaioDriveClient(QMainWindow):
         issues = self.rclone_manager.check_dependencies()
         
         if issues:
+            # Check if WinFsp installation is available
+            winfsp_installer_available = False
+            winfsp_needs_install = False
+            
+            if platform.system() == "Windows":
+                for issue in issues:
+                    if "WinFsp" in issue and "Installer available" in issue:
+                        winfsp_installer_available = True
+                        winfsp_needs_install = True
+                        break
+                    elif "WinFsp" in issue:
+                        winfsp_needs_install = True
+            
+            # If WinFsp installer is available, offer to install it automatically
+            if winfsp_installer_available:
+                reply = QMessageBox.question(
+                    self,
+                    "Install Required Dependencies",
+                    "WinFsp is required for mounting cloud storage on Windows.\n\n"
+                    "We have included the WinFsp installer with this application.\n"
+                    "Would you like to install it now?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+                    QMessageBox.StandardButton.Yes
+                )
+                
+                if reply == QMessageBox.StandardButton.Yes:
+                    if self.rclone_manager.install_winfsp(self):
+                        # Recheck dependencies after installation
+                        remaining_issues = self.rclone_manager.check_dependencies()
+                        if not remaining_issues:
+                            return  # All dependencies resolved
+                        issues = remaining_issues
+                elif reply == QMessageBox.StandardButton.Cancel:
+                    return
+            
+            # Show remaining issues
             issue_text = "\n".join([f"• {issue}" for issue in issues])
             msg = QMessageBox(self)
             msg.setIcon(QMessageBox.Icon.Warning)
@@ -1369,18 +1505,25 @@ class HaioDriveClient(QMainWindow):
             msg.setDetailedText(issue_text)
             
             if platform.system() == "Windows":
-                msg.setInformativeText(
-                    "To use this application on Windows:\n"
-                    "1. Download and install WinFsp from GitHub\n"
-                    "2. Download rclone.exe and place it in the same folder as this app\n"
-                    "3. Restart the application"
-                )
+                if winfsp_needs_install and not winfsp_installer_available:
+                    msg.setInformativeText(
+                        "To use this application on Windows:\n"
+                        "1. Download and install WinFsp from:\n"
+                        "   https://github.com/billziss-gh/winfsp/releases\n"
+                        "2. Restart the application\n\n"
+                        "Note: rclone is already bundled with this application."
+                    )
+                else:
+                    msg.setInformativeText(
+                        "All required dependencies should be bundled with this application.\n"
+                        "If you're seeing this message, please contact support."
+                    )
             else:
                 msg.setInformativeText(
                     "To use this application on Linux:\n"
-                    "1. Install rclone: curl https://rclone.org/install.sh | sudo bash\n"
-                    "2. Install FUSE: sudo apt-get install fuse\n"
-                    "3. Restart the application"
+                    "1. Install FUSE: sudo apt-get install fuse\n"
+                    "2. Restart the application\n\n"
+                    "Note: rclone is already bundled with this application."
                 )
             
             msg.exec()
