@@ -2,15 +2,26 @@
 
 A professional cross-platform desktop application for mounting cloud storage as local drives on Windows and Linux systems.
 
-## 🚀 Latest Release - v1.2.1
+## 🚀 Latest Release - v1.3.0
 
-### ✨ What's New in v1.2.1
+### 📦 Zero-Dependency Installation
+
+Starting with v1.3.0, Haio Smart Solutions Client includes **all required dependencies** for a seamless installation experience:
+
+- ✅ **rclone bundled**: No separate download required
+- ✅ **WinFsp installer included** (Windows): Automatic installation with user consent
+- ✅ **Self-contained executable**: Works immediately after download
+- ✅ **One-click installation**: Download and run - no technical setup required
+
+### ✨ What's New in v1.3.0
 
 - **🎨 Enhanced User Experience**: Professional login dialog with draggable window functionality
 - **🏷️ Complete Rebranding**: Updated to "Haio Smart Solutions" with modern visual identity
 - **🖼️ Application Icon Support**: Taskbar and window icons for better desktop integration
 - **🔄 Circular Logo Masking**: Seamless logo integration without background artifacts
 - **⚡ Improved Authentication**: Loading states, error handling, and better user feedback
+- **📦 Bundled Dependencies**: Zero manual dependency installation required
+- **🛠️ Automatic WinFsp Installation**: Guided installation process on Windows
 - **🐛 Bug Fixes**: Resolved login window dragging, label visibility, and PyQt6 compatibility issues
 
 ## Features

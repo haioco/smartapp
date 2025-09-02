@@ -10,94 +10,101 @@ block_cipher = None
 # Download rclone if not present
 def download_rclone():
     """Download rclone binary for the current platform."""
-    if platform.system() == "Windows":
-        rclone_url = "https://downloads.rclone.org/rclone-current-windows-amd64.zip"
-        rclone_zip = "rclone-windows.zip"
-        rclone_exe = "rclone.exe"
-        
-        if not os.path.exists(rclone_exe):
-            print("Downloading rclone for Windows...")
-            try:
-                response = requests.get(rclone_url, stream=True)
-                response.raise_for_status()
-                
-                with open(rclone_zip, 'wb') as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        f.write(chunk)
-                
-                # Extract rclone.exe
-                with zipfile.ZipFile(rclone_zip, 'r') as zip_ref:
-                    for file_info in zip_ref.filelist:
-                        if file_info.filename.endswith('rclone.exe'):
-                            # Extract just the rclone.exe file
-                            file_info.filename = 'rclone.exe'
-                            zip_ref.extract(file_info, '.')
-                            break
-                
-                # Cleanup
-                os.remove(rclone_zip)
-                print("✅ rclone downloaded successfully")
-                
-            except Exception as e:
-                print(f"❌ Failed to download rclone: {e}")
-                print("Please download rclone manually from https://rclone.org/downloads/")
+    import platform
+    import requests
+    import zipfile
+    import os
     
-    elif platform.system() == "Linux":
-        rclone_url = "https://downloads.rclone.org/rclone-current-linux-amd64.zip"
-        rclone_zip = "rclone-linux.zip"
-        rclone_binary = "rclone"
+    system = platform.system().lower()
+    arch = platform.machine().lower()
+    
+    # Map architecture names
+    if arch in ['x86_64', 'amd64']:
+        arch = 'amd64'
+    elif arch in ['i386', 'i686', 'x86']:
+        arch = '386'
+    elif arch in ['armv7l', 'armv6l']:
+        arch = 'arm'
+    elif arch in ['aarch64', 'arm64']:
+        arch = 'arm64'
+    
+    if system == "windows":
+        rclone_filename = f"rclone-v1.67.0-windows-{arch}.zip"
+        rclone_exe = "rclone.exe"
+    else:
+        rclone_filename = f"rclone-v1.67.0-linux-{arch}.zip"
+        rclone_exe = "rclone"
+    
+    rclone_url = f"https://downloads.rclone.org/v1.67.0/{rclone_filename}"
+    
+    print(f"Downloading rclone from: {rclone_url}")
+    
+    try:
+        response = requests.get(rclone_url, stream=True, timeout=30)
+        response.raise_for_status()
         
-        if not os.path.exists(rclone_binary):
-            print("Downloading rclone for Linux...")
-            try:
-                response = requests.get(rclone_url, stream=True)
-                response.raise_for_status()
-                
-                with open(rclone_zip, 'wb') as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        f.write(chunk)
-                
-                # Extract rclone binary
-                with zipfile.ZipFile(rclone_zip, 'r') as zip_ref:
-                    for file_info in zip_ref.filelist:
-                        if file_info.filename.endswith('/rclone'):
-                            # Extract just the rclone binary
-                            with zip_ref.open(file_info) as source:
-                                with open('rclone', 'wb') as target:
-                                    shutil.copyfileobj(source, target)
-                            os.chmod('rclone', 0o755)  # Make executable
-                            break
-                
-                # Cleanup
-                os.remove(rclone_zip)
-                print("✅ rclone downloaded successfully")
-                
-            except Exception as e:
-                print(f"❌ Failed to download rclone: {e}")
-                print("Please download rclone manually from https://rclone.org/downloads/")
+        with open(rclone_filename, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+        
+        # Extract rclone binary
+        with zipfile.ZipFile(rclone_filename, 'r') as zip_file:
+            # Find the rclone executable in the zip
+            for file_info in zip_file.filelist:
+                if file_info.filename.endswith(rclone_exe):
+                    # Extract just the executable
+                    with zip_file.open(file_info) as source:
+                        with open(rclone_exe, 'wb') as target:
+                            target.write(source.read())
+                    break
+        
+        # Clean up zip file
+        os.remove(rclone_filename)
+        
+        print(f"SUCCESS: rclone downloaded successfully: {rclone_exe}")
+        return rclone_exe
+        
+    except Exception as e:
+        print(f"ERROR: Failed to download rclone: {e}")
+        return None
 
 # Download WinFsp installer for Windows
 def download_winfsp():
-    """Download WinFsp installer for Windows."""
-    if platform.system() == "Windows":
-        winfsp_url = "https://github.com/billziss-gh/winfsp/releases/download/v1.12/winfsp-1.12.22339.msi"
-        winfsp_installer = "winfsp-installer.msi"
-        
-        if not os.path.exists(winfsp_installer):
-            print("Downloading WinFsp installer...")
-            try:
-                response = requests.get(winfsp_url, stream=True)
-                response.raise_for_status()
-                
-                with open(winfsp_installer, 'wb') as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        f.write(chunk)
-                
-                print("✅ WinFsp installer downloaded successfully")
-                
-            except Exception as e:
-                print(f"❌ Failed to download WinFsp installer: {e}")
-                print("Please download WinFsp manually from https://github.com/billziss-gh/winfsp/releases")
+    """Download WinFsp installer for Windows builds."""
+    if platform.system() != "Windows":
+        return
+    
+    print("Downloading WinFsp installer...")
+    
+    # WinFsp download URLs (try multiple versions, starting with latest)
+    winfsp_urls = [
+        "https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.25156.msi",
+        "https://github.com/winfsp/winfsp/releases/download/v2.0/winfsp-2.0.23721.msi",
+        "https://github.com/winfsp/winfsp/releases/download/v1.12/winfsp-1.12.22339.msi",
+        "https://github.com/winfsp/winfsp/releases/download/v1.11/winfsp-1.11.22176.msi"
+    ]
+    
+    winfsp_path = "winfsp-installer.msi"
+    
+    for url in winfsp_urls:
+        try:
+            print(f"Trying to download from: {url}")
+            response = requests.get(url, stream=True, timeout=30)
+            response.raise_for_status()
+            
+            with open(winfsp_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            
+            print(f"SUCCESS: WinFsp installer downloaded successfully: {winfsp_path}")
+            return winfsp_path
+            
+        except Exception as e:
+            print(f"FAILED: Could not download from {url}: {e}")
+            continue
+    
+    print("ERROR: Failed to download WinFsp installer from all URLs")
+    return None
 
 # Download dependencies during build
 download_rclone()
