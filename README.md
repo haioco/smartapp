@@ -1,17 +1,30 @@
-# Haio Drive Client
+# Haio Smart Solutions Client
 
-A cross-platform desktop application for mounting cloud storage as local drives on Windows and Linux systems.
+A professional cross-platform desktop application for mounting cloud storage as local drives on Windows and Linux systems.
+
+## 🚀 Latest Release - v1.2.1
+
+### ✨ What's New in v1.2.1
+
+- **🎨 Enhanced User Experience**: Professional login dialog with draggable window functionality
+- **🏷️ Complete Rebranding**: Updated to "Haio Smart Solutions" with modern visual identity
+- **🖼️ Application Icon Support**: Taskbar and window icons for better desktop integration
+- **🔄 Circular Logo Masking**: Seamless logo integration without background artifacts
+- **⚡ Improved Authentication**: Loading states, error handling, and better user feedback
+- **🐛 Bug Fixes**: Resolved login window dragging, label visibility, and PyQt6 compatibility issues
 
 ## Features
 
-- **Modern PyQt6 GUI** with grouped controls and professional styling
+- **Modern PyQt6 GUI** with professional styling and enhanced user experience
 - **Cross-platform support** for Windows and Linux
+- **Draggable login dialog** with comprehensive authentication flow
 - **User-friendly mounting** to home directory (no root/admin privileges required)
 - **GUI password prompts** to prevent terminal blocking
 - **Connection testing** before mounting
 - **Real-time logging** and status updates
 - **Threaded operations** for responsive UI
 - **Auto-mount at boot** with systemd integration
+- **Application icon** for taskbar and window
 - **Portable executables** with all dependencies included
 - **Smart unmount handling** with automatic busy device resolution
 
