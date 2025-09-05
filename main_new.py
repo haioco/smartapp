@@ -210,13 +210,10 @@ class RcloneManager:
             if not os.path.exists("/usr/bin/fusermount") and not os.path.exists("/bin/fusermount"):
                 issues.append("FUSE is not installed (install with: sudo apt-get install fuse)")
         
-        # Check WinFsp on Windows  
+        # Check WinFsp on Windows with better detection
         elif platform.system() == "Windows":
-            winfsp_paths = [
-                r"C:\Program Files (x86)\WinFsp\bin\launchctl-x64.exe",
-                r"C:\Program Files\WinFsp\bin\launchctl-x64.exe"
-            ]
-            if not any(os.path.exists(path) for path in winfsp_paths):
+            winfsp_installed = self._check_winfsp_installation()
+            if not winfsp_installed:
                 # Check if we have bundled WinFsp installer
                 bundled_installer = self._find_bundled_winfsp_installer()
                 if bundled_installer:
@@ -225,6 +222,36 @@ class RcloneManager:
                     issues.append("WinFsp is not installed (download from: https://github.com/billziss-gh/winfsp/releases)")
         
         return issues
+    
+    def _check_winfsp_installation(self):
+        """Check if WinFsp is properly installed on Windows."""
+        if platform.system() != "Windows":
+            return True
+            
+        # Check multiple possible WinFsp installation paths
+        winfsp_paths = [
+            r"C:\Program Files\WinFsp\bin\launchctl-x64.exe",
+            r"C:\Program Files (x86)\WinFsp\bin\launchctl-x64.exe",
+            r"C:\Program Files\WinFsp\bin\winfsp-x64.dll",
+            r"C:\Program Files (x86)\WinFsp\bin\winfsp-x64.dll",
+            # Check system driver
+            r"C:\Windows\System32\drivers\winfsp.sys"
+        ]
+        
+        # Check if any WinFsp files exist
+        winfsp_found = any(os.path.exists(path) for path in winfsp_paths)
+        
+        if winfsp_found:
+            # Also try to verify WinFsp service is available
+            try:
+                result = subprocess.run(['sc', 'query', 'WinFsp'], 
+                                      capture_output=True, text=True, timeout=5)
+                return result.returncode == 0
+            except:
+                # If service check fails, but files exist, assume it's installed
+                return True
+        
+        return False
     
     def _find_bundled_winfsp_installer(self):
         """Find bundled WinFsp installer."""
@@ -332,7 +359,14 @@ class RcloneManager:
             
             # Check if already mounted
             if self.is_mounted(mount_point):
+                print(f"Bucket {bucket_name} is already mounted at {mount_point}")
                 return True
+            
+            # Check dependencies before mounting
+            if platform.system() == "Windows":
+                if not self._check_winfsp_installation():
+                    print("ERROR: WinFsp is not installed. Please install WinFsp before mounting.")
+                    return False
             
             # Setup rclone mount command
             config_name = f"haio_{username}"
@@ -354,11 +388,44 @@ class RcloneManager:
                 mount_point
             ]
             
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            return result.returncode == 0
+            # Add Windows-specific options
+            if platform.system() == "Windows":
+                cmd.extend([
+                    '--network-mode',  # Use network mode on Windows
+                    '--volname', f'Haio-{bucket_name}'  # Set volume name
+                ])
             
+            print(f"Mounting {bucket_name} with command: {' '.join(cmd)}")
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            
+            if result.returncode == 0:
+                print(f"Mount command completed successfully for {bucket_name}")
+                # Wait a moment and check if mount is actually active
+                import time
+                time.sleep(2)
+                if self.is_mounted(mount_point):
+                    print(f"Mount verification successful for {bucket_name}")
+                    return True
+                else:
+                    print(f"Mount command succeeded but mount point is not active for {bucket_name}")
+                    print(f"STDOUT: {result.stdout}")
+                    print(f"STDERR: {result.stderr}")
+                    return False
+            else:
+                print(f"Mount command failed for {bucket_name}")
+                print(f"Return code: {result.returncode}")
+                print(f"STDOUT: {result.stdout}")
+                print(f"STDERR: {result.stderr}")
+                return False
+            
+        except subprocess.TimeoutExpired:
+            print(f"Mount command timed out for {bucket_name}")
+            return False
         except Exception as e:
             print(f"Error mounting {bucket_name}: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
     def unmount_bucket(self, mount_point: str) -> bool:
@@ -641,6 +708,130 @@ WantedBy=default.target
             print(f"Error checking systemd service: {e}")
             return False
 
+    def create_windows_startup_task(self, username: str, bucket_name: str, mount_point: str, parent_widget=None) -> bool:
+        """Create a Windows Task Scheduler task for auto-mount at startup."""
+        if platform.system() != "Windows":
+            return False
+            
+        try:
+            task_name = f"HaioMount-{username}-{bucket_name}"
+            
+            # Get the current executable path
+            if hasattr(sys, '_MEIPASS'):
+                # Running as PyInstaller bundle
+                exe_path = sys.executable
+            else:
+                # Running as script
+                exe_path = os.path.abspath(__file__)
+            
+            # Create PowerShell command to create scheduled task
+            ps_command = f"""
+            $Action = New-ScheduledTaskAction -Execute '{exe_path}' -Argument '--auto-mount --username {username} --bucket {bucket_name} --mount-point "{mount_point}"'
+            $Trigger = New-ScheduledTaskTrigger -AtStartup
+            $Principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
+            $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
+            Register-ScheduledTask -TaskName '{task_name}' -Action $Action -Trigger $Trigger -Principal $Principal -Settings $Settings -Force
+            """
+            
+            # Execute PowerShell command
+            result = subprocess.run(['powershell', '-Command', ps_command], 
+                                  capture_output=True, text=True, timeout=30)
+            
+            if result.returncode == 0:
+                if parent_widget:
+                    from PyQt6.QtWidgets import QMessageBox
+                    QMessageBox.information(
+                        parent_widget, 
+                        "Auto-mount Enabled", 
+                        f"Auto-mount task created successfully for '{bucket_name}'.\n"
+                        f"The bucket will be automatically mounted when Windows starts."
+                    )
+                return True
+            else:
+                print(f"Failed to create Windows startup task: {result.stderr}")
+                return False
+                
+        except Exception as e:
+            print(f"Error creating Windows startup task: {e}")
+            return False
+    
+    def remove_windows_startup_task(self, username: str, bucket_name: str, parent_widget=None) -> bool:
+        """Remove Windows Task Scheduler task for auto-mount."""
+        if platform.system() != "Windows":
+            return True
+            
+        try:
+            task_name = f"HaioMount-{username}-{bucket_name}"
+            
+            # Remove the scheduled task
+            result = subprocess.run(['schtasks', '/Delete', '/TN', task_name, '/F'], 
+                                  capture_output=True, text=True, timeout=10)
+            
+            if result.returncode == 0:
+                if parent_widget:
+                    from PyQt6.QtWidgets import QMessageBox
+                    QMessageBox.information(
+                        parent_widget, 
+                        "Auto-mount Disabled", 
+                        f"Auto-mount task removed successfully for '{bucket_name}'."
+                    )
+                return True
+            else:
+                # Task might not exist, which is fine
+                return True
+                
+        except Exception as e:
+            print(f"Error removing Windows startup task: {e}")
+            return False
+    
+    def is_windows_startup_task_enabled(self, username: str, bucket_name: str) -> bool:
+        """Check if Windows Task Scheduler task exists for auto-mount."""
+        if platform.system() != "Windows":
+            return False
+            
+        try:
+            task_name = f"HaioMount-{username}-{bucket_name}"
+            
+            # Check if task exists
+            result = subprocess.run(['schtasks', '/Query', '/TN', task_name], 
+                                  capture_output=True, text=True, timeout=5)
+            return result.returncode == 0
+            
+        except Exception as e:
+            print(f"Error checking Windows startup task: {e}")
+            return False
+
+    def create_auto_mount_service(self, username: str, bucket_name: str, mount_point: str, parent_widget=None) -> bool:
+        """Create auto-mount service for the current platform."""
+        if platform.system() == "Linux":
+            return self.create_systemd_service(username, bucket_name, mount_point, parent_widget)
+        elif platform.system() == "Windows":
+            return self.create_windows_startup_task(username, bucket_name, mount_point, parent_widget)
+        else:
+            if parent_widget:
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.information(parent_widget, "Not Supported", 
+                                      "Auto-mount at boot is not supported on this operating system.")
+            return False
+    
+    def remove_auto_mount_service(self, username: str, bucket_name: str, parent_widget=None) -> bool:
+        """Remove auto-mount service for the current platform."""
+        if platform.system() == "Linux":
+            return self.remove_systemd_service(username, bucket_name, parent_widget)
+        elif platform.system() == "Windows":
+            return self.remove_windows_startup_task(username, bucket_name, parent_widget)
+        else:
+            return True
+    
+    def is_auto_mount_service_enabled(self, username: str, bucket_name: str) -> bool:
+        """Check if auto-mount service is enabled for the current platform."""
+        if platform.system() == "Linux":
+            return self.is_systemd_service_enabled(username, bucket_name)
+        elif platform.system() == "Windows":
+            return self.is_windows_startup_task_enabled(username, bucket_name)
+        else:
+            return False
+
 class TokenManager:
     """Manages authentication tokens persistently."""
     
@@ -877,7 +1068,7 @@ class BucketWidget(QFrame):
         self.auto_mount_cb.setStyleSheet("color: #34495e;")
         
         # Check current auto-mount status and set checkbox state
-        is_auto_mount_enabled = self.rclone_manager.is_systemd_service_enabled(
+        is_auto_mount_enabled = self.rclone_manager.is_auto_mount_service_enabled(
             self.username, self.bucket_info['name'])
         self.auto_mount_cb.setChecked(is_auto_mount_enabled)
         
@@ -2092,18 +2283,19 @@ The system will automatically retry unmounting when files are no longer in use."
             # Use user's home directory instead of /mnt/ to avoid permission issues
             user_home = os.path.expanduser("~")
             mount_point = f"{user_home}/haio-{self.current_user}-{bucket_name}"
-            success = self.rclone_manager.create_systemd_service(
+            success = self.rclone_manager.create_auto_mount_service(
                 self.current_user, bucket_name, mount_point, self)
             
             if success:
                 self.status_bar.showMessage(f"✓ Auto-mount enabled for {bucket_name}")
             else:
                 self.status_bar.showMessage(f"✗ Failed to enable auto-mount for {bucket_name}")
+                platform_name = "Windows" if os.name == 'nt' else "Linux"
                 QMessageBox.warning(self, "Auto-mount Failed", 
                                   f"Failed to enable auto-mount for {bucket_name}.\n"
-                                  "Make sure you have sudo privileges.")
+                                  f"Make sure you have admin privileges on {platform_name}.")
         else:
-            success = self.rclone_manager.remove_systemd_service(self.current_user, bucket_name, self)
+            success = self.rclone_manager.remove_auto_mount_service(self.current_user, bucket_name, self)
             
             if success:
                 self.status_bar.showMessage(f"✓ Auto-mount disabled for {bucket_name}")
