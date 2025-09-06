@@ -43,6 +43,9 @@ build_release.bat
 build_release.sh
 setup_windows.bat
 setup_linux.sh
+build_linux_compat.sh
+build_docker_debian12.sh
+build_appimage.sh
 
 # Build Packages and Archives
 smarthaioapp-windows*.zip
@@ -56,6 +59,13 @@ winfsp-installer.msi
 # Temporary Build Directories
 smarthaioapp-windows-build/
 smarthaioapp-windows-final/
+HaioSmartApp.AppDir/
+dist-debian12/
+venv_compat/
+
+# AppImage tools
+*.AppImage
+linuxdeploy-*.AppImage
 
 # Installer logs
 pip-log.txt
