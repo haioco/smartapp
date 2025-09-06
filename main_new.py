@@ -189,6 +189,22 @@ class RcloneManager:
         except:
             return False
     
+    def _run_hidden_subprocess(self, cmd, **kwargs):
+        """Run subprocess command without showing console window on Windows."""
+        if platform.system() == "Windows":
+            # Create startupinfo to hide console window
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0  # SW_HIDE
+            
+            # Add creation flags to prevent console window
+            creation_flags = kwargs.get('creationflags', 0)
+            creation_flags |= 0x08000000  # CREATE_NO_WINDOW
+            kwargs['creationflags'] = creation_flags
+            kwargs['startupinfo'] = startupinfo
+        
+        return subprocess.run(cmd, **kwargs)
+    
     def check_dependencies(self):
         """Check if required dependencies are available."""
         issues = []
@@ -485,7 +501,8 @@ class RcloneManager:
                 import time
                 
                 def run_mount():
-                    subprocess.run(cmd, capture_output=False, text=True)
+                    # Use helper function to hide console window
+                    self._run_hidden_subprocess(cmd, capture_output=False, text=True)
                 
                 # Start mount in background thread
                 mount_thread = threading.Thread(target=run_mount, daemon=True)
