@@ -2200,7 +2200,7 @@ class BucketWidget(QFrame):
         
         # Browse & Share button (if TempURL feature is available)
         if TEMPURL_AVAILABLE:
-            self.browse_share_btn = QPushButton("📂 Browse & Share")
+            self.browse_share_btn = QPushButton("� Browse & Share")
             self.browse_share_btn.setStyleSheet("""
                 QPushButton {
                     background-color: #e67e22;

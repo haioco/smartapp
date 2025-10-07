@@ -86,7 +86,7 @@ class BucketBrowserDialog(QDialog):
         header_layout = QHBoxLayout()
         
         # Up/Back button
-        self.up_btn = QPushButton("⬆ Up")
+        self.up_btn = QPushButton("← Up")
         self.up_btn.setFixedSize(80, 40)
         self.up_btn.clicked.connect(self.go_up)
         self.up_btn.setEnabled(False)
@@ -122,7 +122,7 @@ class BucketBrowserDialog(QDialog):
         
         # Search box
         self.search_box = QLineEdit()
-        self.search_box.setPlaceholderText("🔍 Search files...")
+        self.search_box.setPlaceholderText("Search files...")
         self.search_box.setFixedHeight(40)
         self.search_box.setMinimumWidth(280)
         self.search_box.textChanged.connect(self.filter_objects)
@@ -143,7 +143,7 @@ class BucketBrowserDialog(QDialog):
         header_layout.addWidget(self.search_box)
         
         # Refresh button
-        refresh_btn = QPushButton("🔄 Refresh")
+        refresh_btn = QPushButton("↻ Refresh")
         refresh_btn.setFixedSize(100, 40)
         refresh_btn.clicked.connect(self.load_objects)
         refresh_btn.setStyleSheet(f"""
@@ -249,7 +249,7 @@ class BucketBrowserDialog(QDialog):
         button_layout = QHBoxLayout()
         
         # Share selected button
-        self.share_selected_btn = QPushButton("📤 Share Selected")
+        self.share_selected_btn = QPushButton("Share Selected")
         self.share_selected_btn.setFixedHeight(45)
         self.share_selected_btn.clicked.connect(self.share_selected)
         self.share_selected_btn.setEnabled(False)
@@ -276,7 +276,7 @@ class BucketBrowserDialog(QDialog):
         button_layout.addStretch()
         
         # Close button
-        close_btn = QPushButton("✖ Close")
+        close_btn = QPushButton("Close")
         close_btn.setFixedHeight(45)
         close_btn.clicked.connect(self.accept)
         close_btn.setStyleSheet("""
@@ -450,8 +450,8 @@ class BucketBrowserDialog(QDialog):
             # Actions button (for both files and folders)
             if not is_folder:
                 # Share button for files
-                share_btn = QPushButton("📤 Share")
-                share_btn.setFixedSize(85, 32)
+                share_btn = QPushButton("Share")
+                share_btn.setFixedSize(75, 32)
                 share_btn.setStyleSheet("""
                     QPushButton {
                         background-color: #3498db;
@@ -473,8 +473,8 @@ class BucketBrowserDialog(QDialog):
                 self.table.setCellWidget(row, 3, share_btn)
             else:
                 # Share folder button
-                share_folder_btn = QPushButton("📁 Share All")
-                share_folder_btn.setFixedSize(95, 32)
+                share_folder_btn = QPushButton("Share All")
+                share_folder_btn.setFixedSize(90, 32)
                 share_folder_btn.setStyleSheet("""
                     QPushButton {
                         background-color: #27ae60;
@@ -544,10 +544,10 @@ class BucketBrowserDialog(QDialog):
         
         if selected_rows > 0:
             self.share_selected_btn.setText(
-                f"📤 Share Selected ({selected_rows})"
+                f"Share Selected ({selected_rows})"
             )
         else:
-            self.share_selected_btn.setText("📤 Share Selected")
+            self.share_selected_btn.setText("Share Selected")
     
     def get_selected_objects(self):
         """Get list of selected object full paths (files only, no folders)."""
