@@ -1096,6 +1096,8 @@ class RcloneManager:
 Description=Haio Drive Mount - {bucket_name}
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
 
 [Service]
 Type=simple
@@ -1127,8 +1129,6 @@ ExecStop=/bin/bash -c 'fusermount -u "${{DrivePathDirectory}}" || umount -l "${{
 # Restart configuration
 Restart=on-failure
 RestartSec=10
-StartLimitIntervalSec=60
-StartLimitBurst=3
 
 # Resource limits
 TimeoutStartSec=30
@@ -2200,7 +2200,7 @@ class BucketWidget(QFrame):
         
         # Browse & Share button (if TempURL feature is available)
         if TEMPURL_AVAILABLE:
-            self.browse_share_btn = QPushButton("� Browse & Share")
+            self.browse_share_btn = QPushButton("📂 Browse & Share")
             self.browse_share_btn.setStyleSheet("""
                 QPushButton {
                     background-color: #e67e22;
