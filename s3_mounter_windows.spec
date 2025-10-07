@@ -9,32 +9,12 @@ block_cipher = None
 
 # Download rclone if not present
 def download_rclone():
-    """Download rclone binary for the current platform."""
-    import platform
-    import requests
-    import zipfile
-    import os
+    """Download rclone binary for Windows."""
+    print("Downloading rclone for Windows...")
     
-    system = platform.system().lower()
-    arch = platform.machine().lower()
-    
-    # Map architecture names
-    if arch in ['x86_64', 'amd64']:
-        arch = 'amd64'
-    elif arch in ['i386', 'i686', 'x86']:
-        arch = '386'
-    elif arch in ['armv7l', 'armv6l']:
-        arch = 'arm'
-    elif arch in ['aarch64', 'arm64']:
-        arch = 'arm64'
-    
-    if system == "windows":
-        rclone_filename = f"rclone-v1.67.0-windows-{arch}.zip"
-        rclone_exe = "rclone.exe"
-    else:
-        rclone_filename = f"rclone-v1.67.0-linux-{arch}.zip"
-        rclone_exe = "rclone"
-    
+    # Force Windows download regardless of current platform
+    rclone_filename = "rclone-v1.67.0-windows-amd64.zip"
+    rclone_exe = "rclone.exe"
     rclone_url = f"https://downloads.rclone.org/v1.67.0/{rclone_filename}"
     
     print(f"Downloading rclone from: {rclone_url}")
@@ -71,9 +51,6 @@ def download_rclone():
 # Download WinFsp installer for Windows
 def download_winfsp():
     """Download WinFsp installer for Windows builds."""
-    if platform.system() != "Windows":
-        return
-    
     print("Downloading WinFsp installer...")
     
     # WinFsp download URLs (try multiple versions, starting with latest)
@@ -107,30 +84,28 @@ def download_winfsp():
     return None
 
 # Download dependencies during build
+print("=== Downloading Windows Dependencies ===")
 download_rclone()
-if platform.system() == "Windows":
-    download_winfsp()
+download_winfsp()
 
-# Platform-specific binaries and data files
+# Windows-specific binaries and data files
 binaries = []
 datas = [
     ('haio-logo.png', '.'),
     ('haio-logo.svg', '.'),
 ]
 
-if platform.system() == "Windows":
-    # Include rclone.exe if it exists
-    if os.path.exists("rclone.exe"):
-        binaries.append(("rclone.exe", '.'))
-    
-    # Include WinFsp installer
-    if os.path.exists("winfsp-installer.msi"):
-        datas.append(("winfsp-installer.msi", '.'))
-        
-elif platform.system() == "Linux":
-    # Include rclone binary if it exists
-    if os.path.exists("rclone"):
-        binaries.append(("rclone", '.'))
+# Include rclone.exe for Windows
+if os.path.exists("rclone.exe"):
+    binaries.append(("rclone.exe", '.'))
+    print("Added rclone.exe to binaries")
+
+# Include WinFsp installer
+if os.path.exists("winfsp-installer.msi"):
+    datas.append(("winfsp-installer.msi", '.'))
+    print("Added WinFsp installer to data files")
+
+print("=== Building Windows Application ===")
 
 a = Analysis(
     ['main_new.py'],
@@ -149,6 +124,13 @@ a = Analysis(
         'threading',
         'platform',
         'configparser',
+        'os',
+        'sys',
+        'tempfile',
+        'shutil',
+        'pathlib',
+        'time',
+        'logging',
         # TempURL feature dependencies
         'tempurl_manager',
         'share_dialog',
@@ -189,11 +171,20 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,
+    console=False,  # Set to False for GUI application
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None
+    icon=None,  # You can add an .ico file here if you have one
+    version=None,  # You can add version info here
 )
+
+print("=== Windows Build Configuration Complete ===")
+print("Features included:")
+print("- Enhanced Windows mounting support")
+print("- WinFsp detection and installation")
+print("- Windows auto-mount using Task Scheduler")
+print("- Cross-platform compatibility")
+print("- Bundled rclone and WinFsp")

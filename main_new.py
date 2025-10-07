@@ -20,6 +20,16 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QPropertyAnimation, QEasingCurve, QRect, QSize, QMetaObject, Q_ARG, QSettings, QUrl
 from PyQt6.QtGui import QFont, QIcon, QPalette, QColor, QPixmap, QPainter, QLinearGradient, QBrush, QAction, QPainterPath
 
+# Import TempURL and sharing components
+try:
+    from tempurl_manager import TempURLManager
+    from share_dialog import ShareDialog, BulkShareDialog
+    from bucket_browser import BucketBrowserDialog
+    TEMPURL_AVAILABLE = True
+except ImportError as e:
+    print(f"TempURL feature not available: {e}")
+    TEMPURL_AVAILABLE = False
+
 
 class ThemeManager:
     """Manages application theme and detects system dark mode."""
@@ -2051,17 +2061,22 @@ class BucketWidget(QFrame):
     
     def setup_ui(self):
         self.setFrameStyle(QFrame.Shape.Box)
-        self.setStyleSheet("""
-            BucketWidget {
-                border: 2px solid #e0e0e0;
+        
+        # Get theme colors for proper dark/light mode support
+        theme = ThemeManager()
+        c = theme.get_colors()
+        
+        self.setStyleSheet(f"""
+            BucketWidget {{
+                border: 2px solid {c['border']};
                 border-radius: 12px;
-                background-color: white;
+                background-color: {c['bg_widget']};
                 margin: 5px;
-            }
-            BucketWidget:hover {
-                border-color: #4CAF50;
-                background-color: #f8fff8;
-            }
+            }}
+            BucketWidget:hover {{
+                border-color: {c['primary']};
+                background-color: {c['bg_alt']};
+            }}
         """)
         
         layout = QVBoxLayout(self)
@@ -2074,14 +2089,14 @@ class BucketWidget(QFrame):
         # Bucket name
         name_label = QLabel(self.bucket_info['name'])
         name_label.setFont(QFont("Arial", 14, QFont.Weight.Bold))
-        name_label.setStyleSheet("color: #2c3e50; margin-bottom: 5px;")
+        name_label.setStyleSheet(f"color: {c['text']}; margin-bottom: 5px;")
         
         # Size info
         size_text = self.format_size(self.bucket_info.get('bytes', 0))
         count_text = f"{self.bucket_info.get('count', 0)} objects"
         
         info_label = QLabel(f"{size_text} • {count_text}")
-        info_label.setStyleSheet("color: #7f8c8d; font-size: 12px;")
+        info_label.setStyleSheet(f"color: {c['text_secondary']}; font-size: 12px;")
         
         header_layout.addWidget(name_label)
         header_layout.addStretch()
@@ -2091,7 +2106,7 @@ class BucketWidget(QFrame):
         
         # Mount point info
         mount_info = QLabel(f"Mount point: {self.mount_point}")
-        mount_info.setStyleSheet("color: #34495e; font-size: 11px;")
+        mount_info.setStyleSheet(f"color: {c['text_secondary']}; font-size: 11px;")
         layout.addWidget(mount_info)
         
         # Status and controls
@@ -2183,9 +2198,36 @@ class BucketWidget(QFrame):
         self.ai_chat_btn.setToolTip("AI-powered chat with your data (Coming Soon)")
         self.ai_chat_btn.clicked.connect(self.show_ai_feature_dialog)
         
+        # Browse & Share button (if TempURL feature is available)
+        if TEMPURL_AVAILABLE:
+            self.browse_share_btn = QPushButton("� Browse & Share")
+            self.browse_share_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #e67e22;
+                    color: white;
+                    border: none;
+                    border-radius: 8px;
+                    padding: 8px 16px;
+                    font-weight: bold;
+                    margin-left: 5px;
+                    font-size: 13px;
+                }
+                QPushButton:hover {
+                    background-color: #d35400;
+                }
+                QPushButton:pressed {
+                    background-color: #ba4a00;
+                }
+            """)
+            self.browse_share_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.browse_share_btn.setToolTip("Browse bucket contents and share files via temporary URLs")
+            self.browse_share_btn.clicked.connect(self.show_bucket_browser)
+        
         controls_layout.addWidget(self.status_label)
         controls_layout.addStretch()
         controls_layout.addWidget(self.auto_mount_cb)
+        if TEMPURL_AVAILABLE:
+            controls_layout.addWidget(self.browse_share_btn)
         controls_layout.addWidget(self.ai_chat_btn)
         controls_layout.addWidget(self.mount_btn)
         
@@ -2401,6 +2443,49 @@ class BucketWidget(QFrame):
         
         # Show the dialog
         dialog.exec()
+    
+    def show_bucket_browser(self):
+        """Show bucket browser dialog for browsing and sharing files."""
+        if not TEMPURL_AVAILABLE:
+            QMessageBox.warning(
+                self,
+                "Feature Not Available",
+                "The TempURL sharing feature is not available.\n"
+                "Please ensure all required modules are installed."
+            )
+            return
+        
+        # Need API client reference - get it from parent
+        api_client = None
+        parent = self.parent()
+        while parent:
+            if hasattr(parent, 'api_client'):
+                api_client = parent.api_client
+                break
+            parent = parent.parent()
+        
+        if not api_client or not api_client.token:
+            QMessageBox.warning(
+                self,
+                "Not Authenticated",
+                "Please log in first to use the share feature."
+            )
+            return
+        
+        # Show browser dialog
+        try:
+            browser = BucketBrowserDialog(
+                self.bucket_info['name'],
+                api_client,
+                self
+            )
+            browser.exec()
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to open bucket browser:\n{str(e)}"
+            )
 
 
 class LoginDialog(QDialog):
