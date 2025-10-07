@@ -174,15 +174,51 @@ Before tagging the next release, ensure:
 
 ---
 
+## ✅ Recently Completed (October 7, 2025)
+
+### Bucket Deletion Auto-Detection & Cleanup
+**Issue**: When buckets were deleted in Haio console:
+- ❌ Stats refreshed but bucket remained visible in UI
+- ❌ Mounted buckets not auto-unmounted
+- ❌ Auto-mount services (systemd/Task Scheduler) not removed
+- ❌ "Unknown property content" CSS warnings in logs
+
+**Solution Implemented**:
+- ✅ Enhanced `sync_bucket_stats()` to detect deleted buckets (set comparison)
+- ✅ Auto-unmount deleted buckets if mounted
+- ✅ Auto-remove systemd services (Linux) and Task Scheduler tasks (Windows)
+- ✅ Refresh bucket list to remove deleted buckets from UI
+- ✅ Detect new buckets and auto-refresh list
+- ✅ Fixed invalid CSS property causing warnings
+- ✅ Comprehensive error handling with stack traces
+
+**Files Updated**:
+- ✅ `main_new.py` - Lines ~4118 (sync_bucket_stats), ~2079 (CSS fix)
+
+**Documentation**:
+- ✅ `BUCKET_DELETION_FIX.md` - Comprehensive documentation
+
+**Testing**:
+- ✅ No errors on startup
+- ✅ No "Unknown property content" warnings
+- ✅ Deletion detection logic implemented
+- [ ] Test bucket deletion in real console
+- [ ] Verify auto-unmount works
+- [ ] Verify systemd service removal (Linux)
+- [ ] Verify Task Scheduler removal (Windows)
+
+---
+
 ## 💡 Future Enhancements (Post v1.6.0)
 
 - AI chat feature with bucket data (already stubbed in UI)
 - Enhanced dark mode support system-wide
 - Better error recovery for mount failures
-- Automatic bucket synchronization
+- Real-time bucket synchronization via WebSocket
 - Multi-language support (Persian + English)
+- Toast notifications for bucket changes
 
 ---
 
 **Last Updated**: October 7, 2025
-**Status**: In active development
+**Status**: In active development - Bucket deletion auto-detection added!

@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy, QDialog, QDialogButtonBox, QFormLayout, QStatusBar,
     QListWidget, QListWidgetItem, QInputDialog
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QPropertyAnimation, QEasingCurve, QRect, QSize, QMetaObject, Q_ARG, QSettings
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QPropertyAnimation, QEasingCurve, QRect, QSize, QMetaObject, Q_ARG, QSettings, QUrl
 from PyQt6.QtGui import QFont, QIcon, QPalette, QColor, QPixmap, QPainter, QLinearGradient, QBrush, QAction, QPainterPath
 
 
@@ -109,34 +109,38 @@ class ThemeManager:
             return False
     
     def get_colors(self):
-        """Get color scheme based on theme."""
+        """Get color scheme based on theme - Using Haio cloud blue colors."""
         if self.is_dark:
             return {
-                'bg': '#1e1e1e',
-                'bg_alt': '#2d2d2d',
-                'bg_widget': '#252525',
-                'text': '#e0e0e0',
-                'text_secondary': '#b0b0b0',
-                'border': '#404040',
-                'primary': '#4CAF50',
-                'primary_hover': '#45a049',
-                'input_bg': '#2d2d2d',
-                'input_border': '#404040',
+                'bg': '#1a1f2e',
+                'bg_alt': '#232936',
+                'bg_widget': '#2a3142',
+                'text': '#e8eef5',
+                'text_secondary': '#a8b5c7',
+                'border': '#3a4556',
+                'primary': '#3498db',  # Haio cloud blue
+                'primary_hover': '#2980b9',  # Darker blue
+                'primary_light': '#5dade2',  # Lighter blue
+                'accent': '#00b8d4',  # Cyan accent
+                'input_bg': '#252b3a',
+                'input_border': '#3a4556',
                 'error_bg': '#3d2020',
                 'error_border': '#5c3030',
             }
         else:
             return {
-                'bg': '#ffffff',
-                'bg_alt': '#f5f6fa',
+                'bg': '#f8fafc',
+                'bg_alt': '#e8f4f8',
                 'bg_widget': '#ffffff',
-                'text': '#2c3e50',
-                'text_secondary': '#7f8c8d',
-                'border': '#e0e0e0',
-                'primary': '#4CAF50',
-                'primary_hover': '#45a049',
+                'text': '#1e3a5f',
+                'text_secondary': '#5a7a9a',
+                'border': '#d0e1f0',
+                'primary': '#3498db',  # Haio cloud blue
+                'primary_hover': '#2980b9',  # Darker blue
+                'primary_light': '#5dade2',  # Lighter blue
+                'accent': '#00b8d4',  # Cyan accent
                 'input_bg': '#fafafa',
-                'input_border': '#e0e0e0',
+                'input_border': '#d0e1f0',
                 'error_bg': '#fdf2f2',
                 'error_border': '#f5c6cb',
             }
@@ -240,6 +244,40 @@ class ApiClient:
             
         except Exception as e:
             print(f"Error listing containers: {e}")
+            return []
+    
+    def set_temp_url_key(self, key: str) -> bool:
+        """Set the X-Account-Meta-Temp-URL-Key for temporary URL generation."""
+        if not self.token or not self.storage_url:
+            return False
+        
+        try:
+            headers = {
+                'X-Auth-Token': self.token,
+                'X-Account-Meta-Temp-URL-Key': key
+            }
+            resp = requests.post(self.storage_url, headers=headers, timeout=10)
+            return resp.status_code == 204
+        except Exception as e:
+            print(f"Error setting temp URL key: {e}")
+            return False
+    
+    def list_objects(self, container: str) -> List[Dict]:
+        """List objects in a container."""
+        if not self.token or not self.storage_url:
+            return []
+        
+        try:
+            headers = {'X-Auth-Token': self.token}
+            url = f"{self.storage_url}/{container}?format=json"
+            resp = requests.get(url, headers=headers, timeout=10)
+            
+            if resp.status_code == 200:
+                return resp.json()
+            return []
+            
+        except Exception as e:
+            print(f"Error listing objects: {e}")
             return []
 
 
@@ -544,7 +582,38 @@ class RcloneManager:
                 # Create the mount point directory
                 os.makedirs(mount_point, exist_ok=True)
             else:
-                # Linux/Unix - create mount point normally
+                # Linux/Unix - check for stale mount and clean up if needed
+                if os.path.exists(mount_point):
+                    # Check if it's a stale/broken mount point
+                    if not os.path.isdir(mount_point):
+                        # It's a file or broken mount - try to clean it up
+                        print(f"Found broken mount point at {mount_point}, attempting cleanup...")
+                        try:
+                            # First try to unmount in case it's a stale mount
+                            unmount_success, unmount_msg = self.unmount_bucket(mount_point)
+                            if unmount_success:
+                                print(f"Successfully cleaned up stale mount at {mount_point}")
+                            else:
+                                print(f"Unmount attempt: {unmount_msg}")
+                            
+                            # Try to remove the mount point if it still exists
+                            if os.path.exists(mount_point):
+                                # Check if it's still not a directory after unmount
+                                if not os.path.isdir(mount_point):
+                                    os.remove(mount_point)
+                                    print(f"Removed stale mount point file: {mount_point}")
+                        except Exception as cleanup_error:
+                            error_msg = f"Mount point {mount_point} exists but cannot be cleaned up: {cleanup_error}"
+                            print(error_msg)
+                            return False, error_msg
+                    elif os.listdir(mount_point):
+                        # Directory exists and is not empty - might be a valid mount or user data
+                        if self.is_mounted(mount_point):
+                            return True, f"Bucket {bucket_name} is already mounted at {mount_point}"
+                        else:
+                            return False, f"Mount point {mount_point} exists and is not empty. Please choose a different location or clear the directory."
+                
+                # Create the mount point directory
                 os.makedirs(mount_point, exist_ok=True)
             
             # Check if already mounted
@@ -922,6 +991,31 @@ class RcloneManager:
             print(f"Error finding/killing rclone process for {drive_letter}: {e}")
             return False
     
+    def is_stale_mount(self, mount_point: str) -> bool:
+        """Check if mount point is a stale/broken mount that needs cleanup."""
+        if not os.path.exists(mount_point):
+            return False
+        
+        try:
+            # Try to access the mount point
+            os.listdir(mount_point)
+            return False  # Accessible, not stale
+        except OSError as e:
+            # Check for common stale mount errors
+            error_msg = str(e).lower()
+            if 'transport endpoint is not connected' in error_msg:
+                print(f"Detected stale mount at {mount_point}: {e}")
+                return True
+            if 'not a directory' in error_msg:
+                print(f"Detected broken mount point at {mount_point}: {e}")
+                return True
+            # Other OS errors might also indicate stale mount
+            print(f"Mount point {mount_point} has access error: {e}")
+            return True
+        except Exception as e:
+            print(f"Error checking if {mount_point} is stale: {e}")
+            return False
+    
     def is_mounted(self, mount_point: str) -> bool:
         """Check if a mount point is currently mounted."""
         try:
@@ -944,10 +1038,15 @@ class RcloneManager:
                     # For folder paths, check if it exists and has content
                     return os.path.exists(mount_point) and os.path.ismount(mount_point)
             else:
-                # Linux/Unix: use mountpoint command
+                # Linux/Unix: use mountpoint command first, then check for stale mount
                 import subprocess
                 result = subprocess.run(['mountpoint', '-q', mount_point], capture_output=True)
-                return result.returncode == 0
+                if result.returncode == 0:
+                    # mountpoint says it's mounted, but check if it's stale
+                    if self.is_stale_mount(mount_point):
+                        return False  # It's mounted but stale
+                    return True
+                return False
         except Exception as e:
             print(f"Error checking mount status for {mount_point}: {e}")
             return False
@@ -965,13 +1064,32 @@ class RcloneManager:
             service_path = f"{self.service_dir}/{service_name}"
             config_name = f"haio_{username}"
             
+            # For systemd services, always use system rclone path (not temp PyInstaller path)
+            # Check common locations for rclone
+            system_rclone = "/usr/bin/rclone"
+            if not os.path.exists(system_rclone):
+                system_rclone = "/usr/local/bin/rclone"
+            if not os.path.exists(system_rclone):
+                # Try to find it in PATH
+                try:
+                    result = subprocess.run(['which', 'rclone'], capture_output=True, text=True)
+                    if result.returncode == 0:
+                        system_rclone = result.stdout.strip()
+                except:
+                    pass
+            
+            # Get current username for running service as user
+            import getpass
+            current_user = getpass.getuser()
+            
             service_content = f"""[Unit]
 Description=Haio Drive Mount - {bucket_name}
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=notify
+Type=simple
+User={current_user}
 Environment=DrivePathDirectory="{mount_point}"
 Environment=CachePathDirectory="{self.cache_dir}"
 Environment=RcloneConfig="{self.config_path}"
@@ -980,7 +1098,7 @@ Environment=ContainerName="{bucket_name}"
 
 ExecStartPre=/bin/mkdir -p "${{DrivePathDirectory}}"
 ExecStartPre=/bin/mkdir -p "${{CachePathDirectory}}"
-ExecStart={self.rclone_executable} mount \\
+ExecStart={system_rclone} mount \\
         --allow-non-empty \\
         --dir-cache-time 10s \\
         --poll-interval 1m \\
@@ -1055,7 +1173,11 @@ WantedBy=multi-user.target
             return False
     
     def remove_systemd_service(self, username: str, bucket_name: str, parent_widget=None) -> bool:
-        """Remove systemd service for a bucket. Linux only."""
+        """Remove systemd service for a bucket. Linux only.
+        
+        Returns:
+            bool: True if service was removed successfully, False if cancelled or failed
+        """
         if platform.system() != "Linux":
             return True  # Nothing to remove on non-Linux systems
             
@@ -1066,35 +1188,55 @@ WantedBy=multi-user.target
             if parent_widget:
                 password_dialog = PasswordDialog(
                     parent_widget, 
-                    f"System password required to remove auto-mount service for '{bucket_name}'."
+                    f"System password required to remove auto-mount service for '{bucket_name}'.\n\n"
+                    f"Note: If you cancel, the service will remain on your system.\n"
+                    f"You can remove it manually later if needed."
                 )
                 
                 if password_dialog.exec() != QDialog.DialogCode.Accepted:
+                    print(f"⚠️  User cancelled password prompt for removing service: {service_name}")
                     return False
                     
                 password = password_dialog.get_password()
                 if not password:
+                    print(f"⚠️  No password provided for removing service: {service_name}")
                     return False
             else:
                 # Fallback - should not happen in GUI app
+                print(f"⚠️  No parent widget provided for password dialog")
                 return False
             
             # Remove service with sudo using GUI password
             commands = [
-                f'echo "{password}" | sudo -S systemctl disable "{service_name}"',
-                f'echo "{password}" | sudo -S systemctl stop "{service_name}"',
-                f'echo "{password}" | sudo -S rm -f "{self.service_dir}/{service_name}"',
-                f'echo "{password}" | sudo -S systemctl daemon-reload'
+                (f'echo "{password}" | sudo -S systemctl disable "{service_name}"', "Disabling service"),
+                (f'echo "{password}" | sudo -S systemctl stop "{service_name}"', "Stopping service"),
+                (f'echo "{password}" | sudo -S rm -f "{self.service_dir}/{service_name}"', "Removing service file"),
+                (f'echo "{password}" | sudo -S systemctl daemon-reload', "Reloading systemd")
             ]
             
-            for cmd in commands:
-                subprocess.run(cmd, shell=True, capture_output=True, text=True)
-                # Continue even if some commands fail (service might not exist)
+            all_success = True
+            for cmd, description in commands:
+                print(f"  {description}...")
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
+                if result.returncode != 0 and result.stderr:
+                    # Check if it's just "not found" error (service doesn't exist - that's ok)
+                    if 'No such file' not in result.stderr and 'not loaded' not in result.stderr:
+                        print(f"    ⚠️  {description} failed: {result.stderr.strip()}")
+                        all_success = False
+                    else:
+                        print(f"    ℹ️  {description}: Service already removed or doesn't exist")
+                else:
+                    print(f"    ✅ {description} completed")
             
-            return True
+            return all_success
             
+        except subprocess.TimeoutExpired:
+            print(f"❌ Timeout while removing systemd service: {service_name}")
+            return False
         except Exception as e:
-            print(f"Error removing systemd service: {e}")
+            print(f"❌ Error removing systemd service: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
     def is_systemd_service_enabled(self, username: str, bucket_name: str) -> bool:
@@ -1979,9 +2121,36 @@ class BucketWidget(QFrame):
         """)
         self.mount_btn.clicked.connect(self.toggle_mount)
         
-        # Auto-mount checkbox
+        # Auto-mount checkbox with theme-aware styling
         self.auto_mount_cb = QCheckBox("Auto-mount at boot")
-        self.auto_mount_cb.setStyleSheet("color: #34495e;")
+        
+        # Get theme colors for proper visibility in dark/light mode
+        theme = ThemeManager()
+        c = theme.get_colors()
+        
+        self.auto_mount_cb.setStyleSheet(f"""
+            QCheckBox {{
+                color: {c['text']};
+                font-size: 13px;
+                font-weight: 500;
+                spacing: 8px;
+            }}
+            QCheckBox::indicator {{
+                width: 18px;
+                height: 18px;
+                border: 2px solid {c['border']};
+                border-radius: 4px;
+                background-color: {c['bg_widget']};
+            }}
+            QCheckBox::indicator:hover {{
+                border-color: {c['primary']};
+            }}
+            QCheckBox::indicator:checked {{
+                background-color: {c['primary']};
+                border-color: {c['primary']};
+                image: none;
+            }}
+        """)
         
         # Check current auto-mount status and set checkbox state
         is_auto_mount_enabled = self.rclone_manager.is_auto_mount_service_enabled(
@@ -1990,17 +2159,18 @@ class BucketWidget(QFrame):
         
         self.auto_mount_cb.toggled.connect(self.on_auto_mount_changed)
         
-        # AI Chat button
-        self.ai_chat_btn = QPushButton("🤖 AI Chat")
+        # AI Chat button - Using better icon alternatives
+        self.ai_chat_btn = QPushButton("✨ AI Chat")
         self.ai_chat_btn.setStyleSheet("""
             QPushButton {
                 background-color: #9b59b6;
                 color: white;
                 border: none;
-                border-radius: 6px;
+                border-radius: 8px;
                 padding: 8px 16px;
                 font-weight: bold;
                 margin-left: 5px;
+                font-size: 13px;
             }
             QPushButton:hover {
                 background-color: #8e44ad;
@@ -2009,6 +2179,8 @@ class BucketWidget(QFrame):
                 background-color: #7d3c98;
             }
         """)
+        self.ai_chat_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.ai_chat_btn.setToolTip("AI-powered chat with your data (Coming Soon)")
         self.ai_chat_btn.clicked.connect(self.show_ai_feature_dialog)
         
         controls_layout.addWidget(self.status_label)
@@ -2026,6 +2198,26 @@ class BucketWidget(QFrame):
                 return f"{bytes_size:.1f} {unit}"
             bytes_size /= 1024.0
         return f"{bytes_size:.1f} PB"
+    
+    def update_stats(self, objects_count: int, size_bytes: int):
+        """Update bucket statistics display."""
+        try:
+            # Find and update the info label
+            for i in range(self.layout().count()):
+                item = self.layout().itemAt(i)
+                if item and item.layout():
+                    # Check if this is the header layout
+                    header_layout = item.layout()
+                    for j in range(header_layout.count()):
+                        widget = header_layout.itemAt(j).widget()
+                        if isinstance(widget, QLabel) and ('objects' in widget.text() or '•' in widget.text()):
+                            # Update this label
+                            size_text = self.format_size(size_bytes)
+                            count_text = f"{objects_count} objects"
+                            widget.setText(f"{size_text} • {count_text}")
+                            break
+        except Exception as e:
+            print(f"Error updating stats for {self.bucket_info['name']}: {e}")
     
     def update_mount_status(self):
         """Update the mount status display."""
@@ -2087,6 +2279,20 @@ class BucketWidget(QFrame):
         dialog.setFixedSize(500, 400)
         dialog.setModal(True)
         
+        # Get theme colors
+        theme = ThemeManager()
+        c = theme.get_colors()
+        
+        # Determine if dark mode
+        is_dark = c['bg'] == '#1a1f2e'
+        
+        # Set dialog background
+        dialog.setStyleSheet(f"""
+            QDialog {{
+                background-color: {c['bg']};
+            }}
+        """)
+        
         # Set up the dialog layout
         layout = QVBoxLayout(dialog)
         layout.setContentsMargins(20, 20, 20, 20)
@@ -2096,59 +2302,67 @@ class BucketWidget(QFrame):
         persian_title = QLabel("🤖 چت هوش مصنوعی با داده‌های شما")
         persian_title.setFont(QFont("Arial", 14, QFont.Weight.Bold))
         persian_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        persian_title.setStyleSheet("color: #9b59b6; margin-bottom: 5px;")
+        persian_title.setStyleSheet(f"color: #9b59b6; margin-bottom: 5px;")
         layout.addWidget(persian_title)
         
         # English title
         title_label = QLabel("AI Chat with Your Data")
         title_label.setFont(QFont("Arial", 12, QFont.Weight.Bold))
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title_label.setStyleSheet("color: #8e44ad; margin-bottom: 15px;")
+        title_label.setStyleSheet(f"color: #8e44ad; margin-bottom: 15px;")
         layout.addWidget(title_label)
         
-        # Description text area
+        # Description text area with theme support
         description = QTextEdit()
         description.setReadOnly(True)
-        description.setStyleSheet("""
-            QTextEdit {
-                border: 2px solid #e0e0e0;
+        
+        # Colors for content based on theme
+        text_color = c['text']
+        bg_color = c['bg_widget']  # Fixed: use bg_widget instead of card_bg
+        border_color = '#9b59b6' if is_dark else '#e0e0e0'
+        highlight_bg = '#2a3142' if is_dark else '#e8f5e8'
+        
+        description.setStyleSheet(f"""
+            QTextEdit {{
+                border: 2px solid {border_color};
                 border-radius: 8px;
-                background-color: #f8f9fa;
+                background-color: {bg_color};
+                color: {text_color};
                 padding: 15px;
                 font-size: 13px;
                 line-height: 1.5;
-            }
+            }}
         """)
         
-        # Bilingual content - All text center-justified
-        content = """
+        # Bilingual content - All text center-justified with theme colors
+        content = f"""
 <div style="text-align: center; margin-bottom: 20px;">
 <h3 style="color: #9b59b6;">🚀 ویژگی به زودی - Coming Soon Feature</h3>
 </div>
 
-<div style="text-align: center; margin-bottom: 25px; border: 2px solid #e8f5e8; padding: 20px; border-radius: 10px;">
-<h4 style="color: #2c3e50; text-align: center;">📊 تجزیه و تحلیل هوشمند داده‌ها و چت</h4>
-<p style="font-size: 14px; line-height: 1.8; text-align: center;">این ویژگی انقلابی داده‌های باکت شما را به فرمت آماده هوش مصنوعی تبدیل می‌کند و امکانات زیر را فراهم می‌آورد:</p>
+<div style="text-align: center; margin-bottom: 25px; border: 2px solid {border_color}; padding: 20px; border-radius: 10px;">
+<h4 style="color: {text_color}; text-align: center;">📊 تجزیه و تحلیل هوشمند داده‌ها و چت</h4>
+<p style="font-size: 14px; line-height: 1.8; text-align: center; color: {text_color};">این ویژگی انقلابی داده‌های باکت شما را به فرمت آماده هوش مصنوعی تبدیل می‌کند و امکانات زیر را فراهم می‌آورد:</p>
 <ul style="padding: 0; line-height: 2; text-align: center; list-style: none;">
-<li style="margin-bottom: 8px; text-align: center;">🔍 <strong>چت با اسناد شما</strong> - سوالاتی در مورد فایل‌هایتان بپرسید و پاسخ‌های فوری دریافت کنید</li>
-<li style="margin-bottom: 8px; text-align: center;">📈 <strong>تجزیه و تحلیل الگوهای داده</strong> - بینش‌هایی در داده‌های ذخیره شده خود کشف کنید</li>
-<li style="margin-bottom: 8px; text-align: center;">🤖 <strong>جستجوی مبتنی بر هوش مصنوعی</strong> - با استفاده از کوئری‌های زبان طبیعی اطلاعات پیدا کنید</li>
-<li style="margin-bottom: 8px; text-align: center;">📋 <strong>تولید گزارش</strong> - خلاصه و تجزیه و تحلیل داده‌های خود را ایجاد کنید</li>
+<li style="margin-bottom: 8px; text-align: center; color: {text_color};">🔍 <strong>چت با اسناد شما</strong> - سوالاتی در مورد فایل‌هایتان بپرسید و پاسخ‌های فوری دریافت کنید</li>
+<li style="margin-bottom: 8px; text-align: center; color: {text_color};">📈 <strong>تجزیه و تحلیل الگوهای داده</strong> - بینش‌هایی در داده‌های ذخیره شده خود کشف کنید</li>
+<li style="margin-bottom: 8px; text-align: center; color: {text_color};">🤖 <strong>جستجوی مبتنی بر هوش مصنوعی</strong> - با استفاده از کوئری‌های زبان طبیعی اطلاعات پیدا کنید</li>
+<li style="margin-bottom: 8px; text-align: center; color: {text_color};">📋 <strong>تولید گزارش</strong> - خلاصه و تجزیه و تحلیل داده‌های خود را ایجاد کنید</li>
 </ul>
 </div>
 
-<div style="text-align: center; border-top: 2px solid #e0e0e0; padding-top: 20px;">
-<h4 style="color: #2c3e50; text-align: center;">📊 Smart Data Analysis & Chat</h4>
-<p style="text-align: center;">This revolutionary feature will transform your bucket data into an AI-ready format, allowing you to:</p>
+<div style="text-align: center; border-top: 2px solid {border_color}; padding-top: 20px;">
+<h4 style="color: {text_color}; text-align: center;">📊 Smart Data Analysis & Chat</h4>
+<p style="text-align: center; color: {text_color};">This revolutionary feature will transform your bucket data into an AI-ready format, allowing you to:</p>
 <ul style="line-height: 1.8; text-align: center; list-style: none; padding: 0;">
-<li style="margin-bottom: 5px; text-align: center;">🔍 <strong>Chat with your documents</strong> - Ask questions about your files and get instant answers</li>
-<li style="margin-bottom: 5px; text-align: center;">📈 <strong>Analyze data patterns</strong> - Discover insights in your stored data</li>
-<li style="margin-bottom: 5px; text-align: center;">🤖 <strong>AI-powered search</strong> - Find information using natural language queries</li>
-<li style="margin-bottom: 5px; text-align: center;">📋 <strong>Generate reports</strong> - Create summaries and analysis of your data</li>
+<li style="margin-bottom: 5px; text-align: center; color: {text_color};">🔍 <strong>Chat with your documents</strong> - Ask questions about your files and get instant answers</li>
+<li style="margin-bottom: 5px; text-align: center; color: {text_color};">📈 <strong>Analyze data patterns</strong> - Discover insights in your stored data</li>
+<li style="margin-bottom: 5px; text-align: center; color: {text_color};">🤖 <strong>AI-powered search</strong> - Find information using natural language queries</li>
+<li style="margin-bottom: 5px; text-align: center; color: {text_color};">📋 <strong>Generate reports</strong> - Create summaries and analysis of your data</li>
 </ul>
 </div>
 
-<div style="text-align: center; margin-top: 20px; padding: 15px; background-color: #e8f5e8; border-radius: 8px;">
+<div style="text-align: center; margin-top: 20px; padding: 15px; background-color: {highlight_bg}; border-radius: 8px;">
 <h4 style="color: #27ae60; margin: 0; text-align: center;">🎯 منتظر این ویژگی شگفت‌انگیز باشید!</h4>
 <h4 style="color: #27ae60; margin: 5px 0 0 0; text-align: center;">Stay tuned for this amazing feature!</h4>
 </div>
@@ -2157,7 +2371,7 @@ class BucketWidget(QFrame):
         description.setHtml(content)
         layout.addWidget(description)
         
-        # Close button
+        # Close button - Always white text on purple background
         button_layout = QHBoxLayout()
         close_btn = QPushButton("Close - بستن")
         close_btn.setStyleSheet("""
@@ -2165,15 +2379,19 @@ class BucketWidget(QFrame):
                 background-color: #9b59b6;
                 color: white;
                 border: none;
-                border-radius: 6px;
-                padding: 10px 20px;
+                border-radius: 8px;
+                padding: 10px 24px;
                 font-weight: bold;
                 font-size: 14px;
             }
             QPushButton:hover {
                 background-color: #8e44ad;
             }
+            QPushButton:pressed {
+                background-color: #7d3c98;
+            }
         """)
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         close_btn.clicked.connect(dialog.accept)
         
         button_layout.addStretch()
@@ -2247,6 +2465,38 @@ class LoginDialog(QDialog):
             self.dragging = False
             event.accept()
     
+    def showEvent(self, event):
+        """Called when dialog is shown - initialize saved credentials."""
+        super().showEvent(event)
+        
+        # Try to load saved credentials
+        if self.parent_window and hasattr(self.parent_window, 'token_manager'):
+            try:
+                token_file = os.path.join(self.parent_window.token_manager.config_dir, "tokens.json")
+                
+                if os.path.exists(token_file):
+                    with open(token_file, 'r') as f:
+                        data = json.load(f)
+                    
+                    # Find the most recent user (the last one in the dict)
+                    if data:
+                        last_user = list(data.keys())[-1]
+                        
+                        # Pre-fill username
+                        self.username_input.setText(last_user)
+                        
+                        # Check if password is saved for this user
+                        password = self.parent_window.token_manager.get_password(last_user)
+                        if password:
+                            # Password is saved, check remember me
+                            self.remember_cb.setChecked(True)
+                            # Also pre-fill password for convenience
+                            self.password_input.setText(password)
+                        else:
+                            self.remember_cb.setChecked(False)
+            except Exception as e:
+                print(f"Error loading saved credentials: {e}")
+    
     def setup_ui(self):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -2263,28 +2513,40 @@ class LoginDialog(QDialog):
         logo_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         logo_layout.setSpacing(8)
         
-        # Load and display the logo
+        # Load and display the logo (SVG preferred for transparent background)
         logo_label = QLabel()
-        logo_path = os.path.join(os.path.dirname(__file__), "haio-logo.png")
-        if os.path.exists(logo_path):
-            pixmap = QPixmap(logo_path)
+        svg_path = os.path.join(os.path.dirname(__file__), "haio-logo.svg")
+        png_path = os.path.join(os.path.dirname(__file__), "haio-logo.png")
+        
+        logo_loaded = False
+        
+        # Try SVG first
+        if os.path.exists(svg_path):
+            pixmap = QPixmap(svg_path)
             if not pixmap.isNull():
-                # Scale the logo to appropriate size
-                scaled_pixmap = pixmap.scaled(50, 50, Qt.AspectRatioMode.KeepAspectRatio, 
+                # Scale the SVG logo to appropriate size
+                scaled_pixmap = pixmap.scaled(60, 60, Qt.AspectRatioMode.KeepAspectRatio, 
                                             Qt.TransformationMode.SmoothTransformation)
                 logo_label.setPixmap(scaled_pixmap)
                 logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                # Make logo background transparent
                 logo_label.setStyleSheet("background: transparent; border: none;")
-            else:
-                # Fallback if image can't be loaded
-                logo_label.setText("🔗")
-                logo_label.setStyleSheet("font-size: 32px; background: transparent; color: #4CAF50;")
+                logo_loaded = True
+        
+        # Fallback to PNG
+        if not logo_loaded and os.path.exists(png_path):
+            pixmap = QPixmap(png_path)
+            if not pixmap.isNull():
+                scaled_pixmap = pixmap.scaled(60, 60, Qt.AspectRatioMode.KeepAspectRatio, 
+                                            Qt.TransformationMode.SmoothTransformation)
+                logo_label.setPixmap(scaled_pixmap)
                 logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        else:
-            # Fallback icon
-            logo_label.setText("🔗")
-            logo_label.setStyleSheet("font-size: 32px; background: transparent; color: #4CAF50;")
+                logo_label.setStyleSheet("background: transparent; border: none;")
+                logo_loaded = True
+        
+        # Final fallback to cloud emoji
+        if not logo_loaded:
+            logo_label.setText("☁")
+            logo_label.setStyleSheet("font-size: 42px; background: transparent; color: #3498db;")
             logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         logo_layout.addWidget(logo_label)
@@ -2378,6 +2640,26 @@ class LoginDialog(QDialog):
         button_layout.addWidget(self.login_btn)
         
         frame_layout.addLayout(button_layout)
+        
+        # Register link section
+        register_layout = QHBoxLayout()
+        register_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        register_layout.setSpacing(5)
+        
+        register_text = QLabel("Don't have an account?")
+        register_text.setObjectName("registerText")
+        
+        self.register_link = QLabel('<a href="https://console.haio.ir" style="color: #4CAF50; text-decoration: none; font-weight: bold;">Register at console.haio.ir</a>')
+        self.register_link.setOpenExternalLinks(True)
+        self.register_link.setObjectName("registerLink")
+        self.register_link.setTextFormat(Qt.TextFormat.RichText)
+        self.register_link.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        
+        register_layout.addWidget(register_text)
+        register_layout.addWidget(self.register_link)
+        
+        frame_layout.addSpacing(10)
+        frame_layout.addLayout(register_layout)
         
         main_layout.addWidget(self.main_frame)
         
@@ -2577,7 +2859,7 @@ class LoginDialog(QDialog):
             }}
             
             QPushButton#loginButton:pressed {{
-                background-color: #3d8b40;
+                background-color: #1c5a85;
             }}
             
             QPushButton#cancelButton {{
@@ -2600,6 +2882,25 @@ class LoginDialog(QDialog):
             
             QPushButton#cancelButton:pressed {{
                 background-color: {c['bg_widget']};
+            }}
+            
+            QLabel#registerText {{
+                color: {c['text_secondary']};
+                font-size: 13px;
+            }}
+            
+            QLabel#registerLink {{
+                font-size: 13px;
+            }}
+            
+            QLabel#registerLink a {{
+                color: {c['primary']};
+                text-decoration: none;
+                font-weight: bold;
+            }}
+            
+            QLabel#registerLink a:hover {{
+                text-decoration: underline;
             }}
         """)
     
@@ -2635,6 +2936,9 @@ class HaioDriveClient(QMainWindow):
         self.buckets = []
         self.bucket_widgets = []
         
+        # Track if user has ever logged in (to handle logout vs initial login)
+        self.has_logged_in = False
+        
         # Store active workers to prevent premature destruction
         self.active_workers = []
         
@@ -2644,6 +2948,11 @@ class HaioDriveClient(QMainWindow):
         
         self.setup_ui()
         self.setup_styling()
+        
+        # Setup periodic stats syncing timer (every 30 seconds)
+        self.stats_sync_timer = QTimer()
+        self.stats_sync_timer.timeout.connect(self.sync_bucket_stats)
+        self.stats_sync_timer.setInterval(30000)  # 30 seconds in milliseconds
         
         # Auto-login if credentials are saved
         # Don't show window initially - show only after login
@@ -2881,60 +3190,79 @@ class HaioDriveClient(QMainWindow):
         self.status_bar.showMessage("Ready")
     
     def create_header(self, parent_layout):
-        """Create the header section."""
+        """Create the header section with redesigned layout."""
         header = QFrame()
         header.setObjectName("header")
-        header.setFixedHeight(80)
+        header.setFixedHeight(90)
         
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(20, 0, 20, 0)
+        header_layout.setContentsMargins(25, 10, 25, 10)
+        header_layout.setSpacing(20)
         
-        # Logo and title
-        title_layout = QHBoxLayout()
-        title_layout.setSpacing(15)
+        # Left side: Logo with dark background + Title and user info
+        left_section = QHBoxLayout()
+        left_section.setSpacing(18)
         
-        # Add logo with better handling
+        # Logo with dark circular background
         logo_container = QFrame()
-        logo_container.setFixedSize(64, 64)
+        logo_container.setFixedSize(70, 70)
         logo_container.setObjectName("logoContainer")
-        logo_layout = QVBoxLayout(logo_container)
-        logo_layout.setContentsMargins(8, 8, 8, 8)
+        logo_container_layout = QVBoxLayout(logo_container)
+        logo_container_layout.setContentsMargins(0, 0, 0, 0)
+        logo_container_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         logo_label = QLabel()
-        logo_path = os.path.join(os.path.dirname(__file__), "haio-logo.png")
         
-        if os.path.exists(logo_path):
-            pixmap = QPixmap(logo_path)
+        # Try SVG first (transparent background), then PNG fallback
+        svg_path = os.path.join(os.path.dirname(__file__), "haio-logo.svg")
+        png_path = os.path.join(os.path.dirname(__file__), "haio-logo.png")
+        
+        logo_loaded = False
+        
+        # Try loading SVG first
+        if os.path.exists(svg_path):
+            pixmap = QPixmap(svg_path)
             if not pixmap.isNull():
-                # Create a circular mask for the logo to remove white background
-                masked_pixmap = self.create_circular_logo(pixmap, 48)
-                logo_label.setPixmap(masked_pixmap)
+                # Scale SVG logo to fit nicely in the dark circle
+                scaled_pixmap = pixmap.scaled(55, 55, Qt.AspectRatioMode.KeepAspectRatio, 
+                                             Qt.TransformationMode.SmoothTransformation)
+                logo_label.setPixmap(scaled_pixmap)
                 logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            else:
-                # Fallback to icon text
-                logo_label.setText("🔗")
-                logo_label.setStyleSheet("font-size: 24px; color: white;")
+                logo_label.setStyleSheet("background: transparent;")
+                logo_loaded = True
+        
+        # Fallback to PNG if SVG didn't work
+        if not logo_loaded and os.path.exists(png_path):
+            pixmap = QPixmap(png_path)
+            if not pixmap.isNull():
+                # Scale PNG logo
+                scaled_pixmap = pixmap.scaled(55, 55, Qt.AspectRatioMode.KeepAspectRatio, 
+                                             Qt.TransformationMode.SmoothTransformation)
+                logo_label.setPixmap(scaled_pixmap)
                 logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        else:
-            # Fallback to icon text with better styling
-            logo_label.setText("H")
+                logo_label.setStyleSheet("background: transparent;")
+                logo_loaded = True
+        
+        # Final fallback to cloud emoji if no logo files found
+        if not logo_loaded:
+            logo_label.setText("☁")
             logo_label.setStyleSheet("""
-                font-size: 28px; 
-                color: white; 
+                font-size: 40px; 
+                color: #3498db; 
                 font-weight: bold; 
-                background-color: rgba(255, 255, 255, 0.2);
-                border-radius: 24px;
-                padding: 8px;
+                background: transparent;
             """)
             logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            logo_label.setFixedSize(48, 48)
+            logo_label.setFixedSize(55, 55)
         
-        logo_layout.addWidget(logo_label)
-        title_layout.addWidget(logo_container)
+        logo_container_layout.addWidget(logo_label)
+        left_section.addWidget(logo_container)
         
-        # Title and user info with improved styling
-        text_layout = QVBoxLayout()
-        text_layout.setSpacing(4)
+        # Title and user info with better spacing
+        text_container = QWidget()
+        text_layout = QVBoxLayout(text_container)
+        text_layout.setSpacing(6)
+        text_layout.setContentsMargins(0, 8, 0, 8)
         
         app_title = QLabel("Haio Smart Solutions")
         app_title.setObjectName("appTitle")
@@ -2946,26 +3274,54 @@ class HaioDriveClient(QMainWindow):
         text_layout.addWidget(self.user_label)
         text_layout.addStretch()
         
-        title_layout.addLayout(text_layout)
+        left_section.addWidget(text_container)
         
-        header_layout.addLayout(title_layout)
+        header_layout.addLayout(left_section)
         header_layout.addStretch()
         
-        # Action buttons with improved styling
+        # Action buttons with improved styling and better icons
         button_container = QWidget()
         button_layout = QHBoxLayout(button_container)
         button_layout.setSpacing(10)
         button_layout.setContentsMargins(0, 0, 0, 0)
         
-        self.refresh_btn = QPushButton("🔄 Refresh")
-        self.refresh_btn.setObjectName("headerButton")
+        # Primary actions (most used)
+        # Refresh button - most frequently used
+        self.refresh_btn = QPushButton("⟳")
+        self.refresh_btn.setObjectName("iconButton")
+        self.refresh_btn.setToolTip("Refresh bucket list and sync stats (Auto-refresh every 30s)")
+        self.refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.refresh_btn.setFixedSize(40, 36)
         self.refresh_btn.clicked.connect(self.refresh_buckets)
         
-        self.logout_btn = QPushButton("🚪 Logout")
-        self.logout_btn.setObjectName("headerButton")
+        # Console button - frequently used
+        self.console_btn = QPushButton("⚙")
+        self.console_btn.setObjectName("iconButton")
+        self.console_btn.setToolTip("Open Haio Console in browser")
+        self.console_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.console_btn.setFixedSize(40, 36)
+        self.console_btn.clicked.connect(self.open_console_browser)
+        
+        # Tools menu button - for less frequent actions
+        self.tools_btn = QPushButton("⋯")
+        self.tools_btn.setObjectName("iconButton")
+        self.tools_btn.setToolTip("Tools & Actions")
+        self.tools_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.tools_btn.setFixedSize(40, 36)
+        self.tools_btn.clicked.connect(self.show_tools_menu)
+        
+        # Logout button
+        self.logout_btn = QPushButton("⏻")
+        self.logout_btn.setObjectName("iconButton")
+        self.logout_btn.setToolTip("Logout from account")
+        self.logout_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.logout_btn.setFixedSize(40, 36)
         self.logout_btn.clicked.connect(self.logout)
         
         button_layout.addWidget(self.refresh_btn)
+        button_layout.addWidget(self.console_btn)
+        button_layout.addWidget(self.tools_btn)
+        button_layout.addSpacing(10)
         button_layout.addWidget(self.logout_btn)
         
         header_layout.addWidget(button_container)
@@ -3019,26 +3375,39 @@ class HaioDriveClient(QMainWindow):
         return page
     
     def create_buckets_page(self):
-        """Create buckets page."""
+        """Create buckets page with improved UI/UX."""
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setContentsMargins(30, 25, 30, 25)
+        layout.setSpacing(20)
         
-        # Page title
+        # Header section with title and subtitle
+        header_layout = QVBoxLayout()
+        header_layout.setSpacing(8)
+        
         title = QLabel("Your Storage Buckets")
         title.setObjectName("pageTitle")
-        layout.addWidget(title)
         
-        # Scroll area for buckets
+        subtitle = QLabel("Manage and mount your cloud storage buckets")
+        subtitle.setObjectName("pageSubtitle")
+        
+        header_layout.addWidget(title)
+        header_layout.addWidget(subtitle)
+        layout.addLayout(header_layout)
+        
+        # Scroll area for buckets with improved styling
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll_area.setObjectName("bucketsScrollArea")
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
         
         # Container for bucket widgets
         self.buckets_container = QWidget()
         self.buckets_layout = QVBoxLayout(self.buckets_container)
-        self.buckets_layout.setSpacing(10)
+        self.buckets_layout.setSpacing(15)
+        self.buckets_layout.setContentsMargins(5, 5, 5, 5)
         self.buckets_layout.addStretch()
         
         scroll_area.setWidget(self.buckets_container)
@@ -3057,23 +3426,25 @@ class HaioDriveClient(QMainWindow):
             QFrame#header {{
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 {c['primary']}, stop:1 {c['primary_hover']});
-                border-bottom: 3px solid #3d8b40;
+                border-bottom: 3px solid {c['primary_hover']};
             }}
             
             QFrame#logoContainer {{
-                background-color: rgba(255, 255, 255, 0.1);
-                border-radius: 32px;
-                border: 2px solid rgba(255, 255, 255, 0.2);
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(52, 152, 219, 0.3), stop:1 rgba(41, 128, 185, 0.3));
+                border-radius: 35px;
+                border: 3px solid rgba(255, 255, 255, 0.2);
             }}
             
             QLabel#appTitle {{
                 color: white;
-                font-size: 20px;
+                font-size: 22px;
                 font-weight: bold;
+                letter-spacing: 0.5px;
             }}
             
             QLabel#userLabel {{
-                color: #e8f5e8;
+                color: rgba(255, 255, 255, 0.85);
                 font-size: 13px;
                 font-weight: 500;
             }}
@@ -3082,21 +3453,82 @@ class HaioDriveClient(QMainWindow):
                 background-color: rgba(255, 255, 255, 0.15);
                 color: white;
                 border: 2px solid rgba(255, 255, 255, 0.3);
-                border-radius: 8px;
-                padding: 10px 16px;
-                font-weight: bold;
-                font-size: 13px;
+                border-radius: 10px;
+                padding: 12px 20px;
+                font-weight: 600;
+                font-size: 14px;
                 margin: 0 2px;
-                min-width: 90px;
+                min-width: 100px;
             }}
             
             QPushButton#headerButton:hover {{
-                background-color: rgba(255, 255, 255, 0.25);
-                border-color: rgba(255, 255, 255, 0.5);
+                background-color: rgba(255, 255, 255, 0.3);
+                border-color: rgba(255, 255, 255, 0.6);
             }}
             
             QPushButton#headerButton:pressed {{
                 background-color: rgba(255, 255, 255, 0.1);
+            }}
+            
+            QPushButton#logoutButton {{
+                background-color: rgba(231, 76, 60, 0.8);
+                color: white;
+                border: 2px solid rgba(255, 255, 255, 0.3);
+                border-radius: 10px;
+                padding: 12px 20px;
+                font-weight: 600;
+                font-size: 14px;
+                margin: 0 2px;
+                min-width: 100px;
+            }}
+            
+            QPushButton#logoutButton:hover {{
+                background-color: rgba(192, 57, 43, 0.9);
+                border-color: rgba(255, 255, 255, 0.6);
+            }}
+            
+            QPushButton#logoutButton:pressed {{
+                background-color: rgba(192, 57, 43, 0.7);
+            }}
+            
+            QPushButton#consoleButton {{
+                background-color: rgba(52, 152, 219, 0.8);
+                color: white;
+                border: 2px solid rgba(255, 255, 255, 0.3);
+                border-radius: 10px;
+                padding: 12px 20px;
+                font-weight: 600;
+                font-size: 14px;
+                margin: 0 2px;
+                min-width: 110px;
+            }}
+            
+            QPushButton#consoleButton:hover {{
+                background-color: rgba(41, 128, 185, 0.9);
+                border-color: rgba(255, 255, 255, 0.6);
+            }}
+            
+            QPushButton#consoleButton:pressed {{
+                background-color: rgba(41, 128, 185, 0.7);
+            }}
+            
+            QPushButton#iconButton {{
+                background-color: rgba(52, 152, 219, 0.1);
+                color: {c['text']};
+                border: none;
+                border-radius: 8px;
+                font-size: 20px;
+                font-weight: 500;
+                padding: 0px;
+            }}
+            
+            QPushButton#iconButton:hover {{
+                background-color: rgba(52, 152, 219, 0.2);
+                color: #3498db;
+            }}
+            
+            QPushButton#iconButton:pressed {{
+                background-color: rgba(52, 152, 219, 0.3);
             }}
             
             QLabel#loadingLabel {{
@@ -3105,15 +3537,43 @@ class HaioDriveClient(QMainWindow):
             }}
             
             QLabel#pageTitle {{
-                font-size: 24px;
+                font-size: 26px;
                 font-weight: bold;
                 color: {c['text']};
-                margin-bottom: 20px;
+                margin-bottom: 5px;
+            }}
+            
+            QLabel#pageSubtitle {{
+                font-size: 14px;
+                color: {c['text_secondary']};
+                margin-bottom: 10px;
             }}
             
             QScrollArea#bucketsScrollArea {{
                 border: none;
                 background-color: transparent;
+            }}
+            
+            QScrollArea#bucketsScrollArea QScrollBar:vertical {{
+                background-color: {c['bg_widget']};
+                width: 12px;
+                border-radius: 6px;
+                margin: 2px;
+            }}
+            
+            QScrollArea#bucketsScrollArea QScrollBar::handle:vertical {{
+                background-color: {c['border']};
+                border-radius: 5px;
+                min-height: 30px;
+            }}
+            
+            QScrollArea#bucketsScrollArea QScrollBar::handle:vertical:hover {{
+                background-color: {c['text_secondary']};
+            }}
+            
+            QScrollArea#bucketsScrollArea QScrollBar::add-line:vertical,
+            QScrollArea#bucketsScrollArea QScrollBar::sub-line:vertical {{
+                height: 0px;
             }}
             
             QProgressBar {{
@@ -3135,9 +3595,62 @@ class HaioDriveClient(QMainWindow):
         # Start with loading page first
         self.content_stack.setCurrentWidget(self.loading_page)
         
-        # For now, show login dialog immediately
-        # In the future, you could check for saved tokens here
-        QTimer.singleShot(100, self.show_login_dialog)  # Small delay to show loading briefly
+        # Check for saved credentials
+        try:
+            import os
+            token_file = os.path.join(self.token_manager.config_dir, "tokens.json")
+            
+            if os.path.exists(token_file):
+                import json
+                with open(token_file, 'r') as f:
+                    data = json.load(f)
+                
+                # Try to find a saved user with credentials
+                for username, user_data in data.items():
+                    password = self.token_manager.get_password(username)
+                    
+                    if password:
+                        # Found saved credentials, try auto-login
+                        self.status_bar.showMessage(f"Auto-login as {username}...")
+                        
+                        # Attempt authentication
+                        if self.api_client.authenticate(username, password):
+                            self.current_user = username
+                            self.user_label.setText(f"Logged in as: {username}")
+                            
+                            # Mark that user has logged in successfully
+                            self.has_logged_in = True
+                            
+                            # Setup rclone
+                            self.rclone_manager.setup_rclone_config(username, password)
+                            
+                            # Show main window
+                            self.show()
+                            
+                            # Load buckets
+                            self.load_buckets()
+                            
+                            # Start stats syncing timer
+                            self.stats_sync_timer.start()
+                            
+                            return  # Success!
+                        else:
+                            # Saved credentials invalid, remove them
+                            print(f"Saved credentials for {username} are invalid, clearing...")
+                            if 'password_enc' in user_data:
+                                del user_data['password_enc']
+                            if 'password' in user_data:
+                                del user_data['password']
+                            
+                            # Save cleared data
+                            with open(token_file, 'w') as f:
+                                json.dump(data, f, indent=2)
+            
+        except Exception as e:
+            print(f"Auto-login error: {e}")
+        
+        # No saved credentials or auto-login failed, show login dialog
+        QTimer.singleShot(100, self.show_login_dialog)
     
     def show_login_dialog(self):
         """Show the login dialog."""
@@ -3148,8 +3661,13 @@ class HaioDriveClient(QMainWindow):
             # Authentication already happened in the dialog, so we can proceed directly
             self.on_auth_finished(True, credentials['username'], credentials['password'], credentials['remember'])
         else:
-            # User cancelled login - exit the application completely
-            QApplication.quit()  # This should terminate the application properly
+            # User cancelled login
+            # If user has never logged in (initial startup), exit the application
+            # If user has logged in before (logout scenario), just keep window hidden
+            if not self.has_logged_in:
+                # Initial login was cancelled - exit the application
+                QApplication.quit()
+            # Otherwise, do nothing - main window stays hidden until they login again
     
     def login(self, username: str, password: str, remember: bool = False):
         """Perform login setup after successful authentication."""
@@ -3180,6 +3698,9 @@ class HaioDriveClient(QMainWindow):
             self.current_user = username
             self.user_label.setText(f"Logged in as: {username}")
             
+            # Mark that user has logged in successfully
+            self.has_logged_in = True
+            
             # Setup rclone configuration
             self.rclone_manager.setup_rclone_config(username, password)
             
@@ -3193,6 +3714,9 @@ class HaioDriveClient(QMainWindow):
             
             # Load buckets
             self.load_buckets()
+            
+            # Start stats syncing timer
+            self.stats_sync_timer.start()
         else:
             self.show_login_error()
     
@@ -3488,20 +4012,422 @@ The system will automatically retry unmounting when files are no longer in use."
             return True
     
     def refresh_buckets(self):
-        """Refresh the buckets list."""
+        """Refresh the buckets list and sync stats."""
         self.load_buckets()
+        self.sync_bucket_stats()
+    
+    def clear_orphaned_buckets(self):
+        """Clean up mounted buckets that no longer exist in the console.
+        
+        This finds:
+        - Buckets that are currently mounted locally
+        - But don't exist in the API/console anymore
+        
+        Then unmounts them and removes their auto-mount services.
+        """
+        if not self.current_user:
+            return
+        
+        try:
+            from PyQt6.QtWidgets import QMessageBox
+            
+            self.status_bar.showMessage("🔍 Scanning for orphaned buckets...")
+            
+            # Get current buckets from API
+            buckets = self.api_client.list_containers()
+            if buckets is None:
+                QMessageBox.warning(
+                    self,
+                    "API Error",
+                    "Could not fetch bucket list from server.\n\n"
+                    "Please check your internet connection and try again."
+                )
+                self.status_bar.showMessage("❌ Failed to fetch bucket list", 5000)
+                return
+            
+            # Get bucket names that exist in console
+            api_bucket_names = {bucket.get('name', '') for bucket in buckets}
+            
+            # Find all mounted buckets
+            mounted_orphans = []
+            home = os.path.expanduser("~")
+            
+            for widget in self.bucket_widgets:
+                bucket_name = widget.bucket_info.get('name')
+                
+                # Check if this bucket exists in API
+                if bucket_name not in api_bucket_names:
+                    # Orphaned bucket in UI - but is it mounted?
+                    if widget.is_mounted and widget.mount_point:
+                        mounted_orphans.append({
+                            'name': bucket_name,
+                            'mount_point': widget.mount_point,
+                            'auto_mount': self.rclone_manager.is_auto_mount_service_enabled(
+                                self.current_user, bucket_name
+                            )
+                        })
+            
+            # Also scan filesystem for any haio-* mounts not in UI
+            try:
+                for item in os.listdir(home):
+                    if item.startswith(f"haio-{self.current_user}-"):
+                        mount_path = os.path.join(home, item)
+                        # Extract bucket name from path
+                        bucket_name = item.replace(f"haio-{self.current_user}-", "")
+                        
+                        # Check if mounted and not in API
+                        if self.rclone_manager.is_mounted(mount_path) and bucket_name not in api_bucket_names:
+                            # Check if not already in list
+                            if not any(o['name'] == bucket_name for o in mounted_orphans):
+                                mounted_orphans.append({
+                                    'name': bucket_name,
+                                    'mount_point': mount_path,
+                                    'auto_mount': self.rclone_manager.is_auto_mount_service_enabled(
+                                        self.current_user, bucket_name
+                                    )
+                                })
+            except Exception as e:
+                print(f"Error scanning filesystem for orphaned mounts: {e}")
+            
+            # No orphaned buckets found
+            if not mounted_orphans:
+                QMessageBox.information(
+                    self,
+                    "All Clean!",
+                    "No orphaned buckets found.\n\n"
+                    "All mounted buckets exist in the console."
+                )
+                self.status_bar.showMessage("✅ No orphaned buckets found", 5000)
+                return
+            
+            # Show confirmation dialog
+            orphan_list = "\n".join([
+                f"  • {o['name']}" + (" (auto-mount enabled)" if o['auto_mount'] else "")
+                for o in mounted_orphans
+            ])
+            
+            reply = QMessageBox.question(
+                self,
+                "Orphaned Buckets Found",
+                f"Found {len(mounted_orphans)} orphaned bucket(s) that are mounted\n"
+                f"but no longer exist in the console:\n\n{orphan_list}\n\n"
+                f"These will be:\n"
+                f"  1. Unmounted from your system\n"
+                f"  2. Auto-mount service removed (if enabled)\n"
+                f"  3. Removed from the app\n\n"
+                f"Continue with cleanup?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes
+            )
+            
+            if reply != QMessageBox.StandardButton.Yes:
+                self.status_bar.showMessage("❌ Cleanup cancelled", 3000)
+                return
+            
+            # Clean up each orphaned bucket
+            cleaned = 0
+            failed = []
+            
+            self.status_bar.showMessage(f"🧹 Cleaning up {len(mounted_orphans)} orphaned bucket(s)...")
+            
+            for orphan in mounted_orphans:
+                bucket_name = orphan['name']
+                mount_point = orphan['mount_point']
+                
+                print(f"\n🧹 Cleaning up orphaned bucket: {bucket_name}")
+                
+                # 1. Unmount
+                if mount_point:
+                    print(f"  Unmounting {mount_point}...")
+                    success, msg = self.rclone_manager.unmount_bucket(mount_point)
+                    if success:
+                        print(f"  ✅ Unmounted successfully")
+                    else:
+                        print(f"  ⚠️  Unmount failed: {msg}")
+                        failed.append(f"{bucket_name} (unmount failed)")
+                        continue
+                
+                # 2. Remove auto-mount service if enabled
+                if orphan['auto_mount']:
+                    print(f"  Removing auto-mount service...")
+                    success = self.rclone_manager.remove_auto_mount_service(
+                        self.current_user, bucket_name, parent_widget=self
+                    )
+                    if success:
+                        print(f"  ✅ Auto-mount service removed")
+                    else:
+                        print(f"  ⚠️  Failed to remove auto-mount service")
+                        # Don't fail the whole operation for this
+                
+                cleaned += 1
+                print(f"  ✅ Cleanup complete for {bucket_name}")
+            
+            # Refresh the bucket list to remove orphaned buckets from UI
+            print(f"\n🔄 Refreshing bucket list...")
+            self.load_buckets()
+            
+            # Show results
+            if failed:
+                QMessageBox.warning(
+                    self,
+                    "Cleanup Partially Complete",
+                    f"✅ Cleaned up: {cleaned} bucket(s)\n"
+                    f"❌ Failed: {len(failed)} bucket(s)\n\n"
+                    f"Failed buckets:\n" + "\n".join([f"  • {f}" for f in failed]) + "\n\n"
+                    f"You may need to clean these up manually."
+                )
+                self.status_bar.showMessage(f"⚠️  Cleaned {cleaned}, failed {len(failed)}", 5000)
+            else:
+                QMessageBox.information(
+                    self,
+                    "Cleanup Complete",
+                    f"✅ Successfully cleaned up {cleaned} orphaned bucket(s)!\n\n"
+                    f"All orphaned mounts have been removed."
+                )
+                self.status_bar.showMessage(f"✅ Cleaned up {cleaned} orphaned bucket(s)", 5000)
+        
+        except Exception as e:
+            print(f"❌ Error during orphaned bucket cleanup: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.critical(
+                self,
+                "Cleanup Error",
+                f"An error occurred during cleanup:\n\n{str(e)}\n\n"
+                f"Check the console for details."
+            )
+            self.status_bar.showMessage("❌ Cleanup error", 5000)
+    
+    def sync_bucket_stats(self):
+        """Sync bucket statistics from API and detect deleted buckets.
+        
+        This method intelligently updates only what's needed:
+        - If buckets deleted → Full refresh (unmount & cleanup)
+        - If buckets added → Full refresh (show new buckets)
+        - If no changes → Partial update (only stats, no UI reload)
+        """
+        if not self.current_user:
+            return
+        
+        try:
+            # Reload buckets data from API
+            buckets = self.api_client.list_containers()
+            if buckets is None:
+                return
+            
+            # Get current bucket names from API
+            api_bucket_names = {bucket.get('name', '') for bucket in buckets}
+            
+            # Get bucket names currently displayed in UI
+            ui_bucket_names = {widget.bucket_info.get('name') for widget in self.bucket_widgets}
+            
+            # Find deleted buckets (in UI but not in API response)
+            deleted_buckets = ui_bucket_names - api_bucket_names
+            
+            # Find new buckets (in API but not in UI)
+            new_buckets = api_bucket_names - ui_bucket_names
+            
+            # Handle deleted buckets: unmount and remove auto-mount service
+            if deleted_buckets:
+                print(f"🗑️ Detected deleted buckets: {deleted_buckets}")
+                self.status_bar.showMessage(f"Bucket(s) deleted: {', '.join(deleted_buckets)} - cleaning up...")
+                
+                for bucket_name in deleted_buckets:
+                    # Find the widget for this bucket
+                    widget = None
+                    for w in self.bucket_widgets:
+                        if w.bucket_info.get('name') == bucket_name:
+                            widget = w
+                            break
+                    
+                    if widget:
+                        # Unmount if currently mounted
+                        if widget.is_mounted and widget.mount_point:
+                            print(f"Auto-unmounting deleted bucket: {bucket_name}")
+                            success, msg = self.rclone_manager.unmount_bucket(widget.mount_point)
+                            if success:
+                                print(f"Successfully unmounted {bucket_name}")
+                            else:
+                                print(f"Failed to unmount {bucket_name}: {msg}")
+                        
+                        # Remove auto-mount service if enabled
+                        if self.rclone_manager.is_auto_mount_service_enabled(self.current_user, bucket_name):
+                            print(f"Removing auto-mount service for deleted bucket: {bucket_name}")
+                            success = self.rclone_manager.remove_auto_mount_service(
+                                self.current_user, bucket_name, parent_widget=self
+                            )
+                            if success:
+                                print(f"✅ Successfully removed auto-mount service for {bucket_name}")
+                            else:
+                                print(f"⚠️  Failed to remove auto-mount service for {bucket_name}")
+                                # Show warning but don't block bucket removal
+                                from PyQt6.QtWidgets import QMessageBox
+                                service_name = f"haio-{self.current_user}-{bucket_name}"
+                                QMessageBox.warning(
+                                    self,
+                                    "Service Removal Failed",
+                                    f"Could not remove auto-mount service for '{bucket_name}'.\n\n"
+                                    f"The bucket was deleted in the console, but the auto-mount service "
+                                    f"remains on your system. This may cause errors on next boot.\n\n"
+                                    f"To remove it manually, run:\n"
+                                    f"  sudo systemctl disable {service_name}.service\n"
+                                    f"  sudo systemctl stop {service_name}.service\n"
+                                    f"  sudo rm /etc/systemd/system/{service_name}.service\n"
+                                    f"  sudo systemctl daemon-reload\n\n"
+                                    f"Or disable auto-mount for this bucket before deleting it."
+                                )
+                
+                # Full refresh to remove deleted buckets from UI
+                print("Refreshing bucket list after deletion detection")
+                self.load_buckets()
+                self.status_bar.showMessage(f"✓ Removed {len(deleted_buckets)} deleted bucket(s)", 5000)
+                return  # load_buckets will display the new list
+            
+            # If new buckets detected, do a full refresh
+            if new_buckets:
+                print(f"➕ Detected new buckets: {new_buckets}")
+                self.status_bar.showMessage(f"New bucket(s) found: {', '.join(new_buckets)}", 5000)
+                self.load_buckets()
+                return
+            
+            # No structural changes - PARTIAL UPDATE ONLY (no UI reload)
+            # This preserves scroll position, button states, user interaction, etc.
+            if buckets and self.bucket_widgets:
+                print(f"📊 Updating stats for {len(self.bucket_widgets)} bucket(s) (partial update)")
+                for bucket_data in buckets:
+                    bucket_name = bucket_data.get('name', '')
+                    for widget in self.bucket_widgets:
+                        if widget.bucket_info.get('name') == bucket_name:
+                            # Update stats display only - no widget recreation
+                            objects_count = bucket_data.get('count', 0)
+                            size_bytes = bucket_data.get('bytes', 0)
+                            widget.update_stats(objects_count, size_bytes)
+                            break
+                # Update status bar briefly to show sync happened
+                self.status_bar.showMessage("✓ Stats synced", 2000)
+        except Exception as e:
+            print(f"Error syncing bucket stats: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def show_tools_menu(self):
+        """Show a popup menu with additional tools and actions."""
+        from PyQt6.QtWidgets import QMenu
+        
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #2a3142;
+                border: 1px solid #3a4556;
+                border-radius: 6px;
+                padding: 8px 0px;
+            }
+            QMenu::item {
+                padding: 10px 30px 10px 20px;
+                color: #e8eef5;
+                background-color: transparent;
+            }
+            QMenu::item:selected {
+                background-color: #3498db;
+                color: white;
+            }
+            QMenu::separator {
+                height: 1px;
+                background: #3a4556;
+                margin: 5px 10px;
+            }
+        """)
+        
+        # Add actions to menu
+        clear_orphaned_action = menu.addAction("🧹 Clear Orphaned Buckets")
+        clear_orphaned_action.triggered.connect(self.clear_orphaned_buckets)
+        clear_orphaned_action.setToolTip("Clean up mounted buckets that no longer exist")
+        
+        menu.addSeparator()
+        
+        # About/Help action
+        about_action = menu.addAction("ℹ️ About")
+        about_action.triggered.connect(self.show_about_dialog)
+        
+        # Show menu at button position
+        menu.exec(self.tools_btn.mapToGlobal(self.tools_btn.rect().bottomLeft()))
+    
+    def show_about_dialog(self):
+        """Show about dialog with app information."""
+        from PyQt6.QtWidgets import QMessageBox
+        
+        msg = QMessageBox(self)
+        msg.setWindowTitle("About Haio Smart App")
+        msg.setIcon(QMessageBox.Icon.Information)
+        msg.setText("<h2>Haio Smart App</h2>")
+        msg.setInformativeText(
+            "<b>Version:</b> 1.6.0<br>"
+            "<b>Auto-refresh:</b> Every 30 seconds<br>"
+            "<br>"
+            "<b>Features:</b><br>"
+            "• Auto-detect deleted buckets<br>"
+            "• Auto-cleanup stale mounts<br>"
+            "• Intelligent partial updates<br>"
+            "• Dark mode support<br>"
+            "<br>"
+            "<b>Haio Cloud Storage</b><br>"
+            "Visit: <a href='https://console.haio.ir'>console.haio.ir</a>"
+        )
+        msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+        msg.exec()
+    
+    def open_console_browser(self):
+        """Open the Haio Console in external browser."""
+        import webbrowser
+        webbrowser.open("https://console.haio.ir")
     
     def logout(self):
         """Logout and return to login screen."""
+        # Stop stats syncing timer
+        if self.stats_sync_timer.isActive():
+            self.stats_sync_timer.stop()
+        
         # Unmount all buckets first
         for widget in self.bucket_widgets:
             if widget.is_mounted:
                 self.rclone_manager.unmount_bucket(widget.mount_point)
         
+        # Clear current user data
+        username_to_clear = self.current_user  # Save username before clearing
         self.current_user = None
         self.api_client.token = None
         self.user_label.setText("Not logged in")
         
+        # Clear bucket display
+        self.buckets = []
+        self.bucket_widgets = []
+        self.display_buckets()
+        
+        # Clear saved credentials for this user
+        try:
+            token_file = os.path.join(self.token_manager.config_dir, "tokens.json")
+            if os.path.exists(token_file) and username_to_clear:
+                with open(token_file, 'r') as f:
+                    data = json.load(f)
+                
+                # Remove the user's saved credentials
+                if username_to_clear in data:
+                    del data[username_to_clear]
+                    
+                    # Save the updated data
+                    with open(token_file, 'w') as f:
+                        json.dump(data, f, indent=2)
+                    
+                    print(f"Cleared saved credentials for {username_to_clear}")
+        except Exception as e:
+            print(f"Error clearing credentials: {e}")
+        
+        # Hide main window BEFORE showing login dialog
+        self.hide()
+        
+        # Show login dialog
         self.show_login_dialog()
     
     def closeEvent(self, event):
@@ -3522,6 +4448,9 @@ The system will automatically retry unmounting when files are no longer in use."
             self.bucket_worker.wait(3000)
         
         event.accept()
+        
+        # Ensure the application quits completely
+        QApplication.quit()
 
 
 def main():
