@@ -11,28 +11,30 @@
 2. ✅ Pulled remote changes (secure password storage improvements)
 3. ✅ Git branch tracking configured (origin/main)
 4. ✅ Established `main_new.py` as the primary working file
+5. ✅ **Added dark mode support** - System theme detection for Windows/macOS/Linux
+6. ✅ **Fixed readability in dark mode** - Dynamic color schemes that adapt to system theme
 
 ## 🔨 Tasks Before Next Release
 
 ### High Priority
 
-#### 1. Fix Login Form UI (URGENT)
-**Issue**: Login form has unreadable field values (white text on light background)
-**Screenshot**: User provided screenshot showing the issue
-**Required Changes**:
-- Redesign login form with better contrast
-- Simplify UI layout
-- Make field labels and values clearly readable
-- Test with both light and dark system themes
+#### 1. ~~Fix Login Form UI (URGENT)~~ ✅ COMPLETED
+**Issue**: ~~Login form has unreadable field values (white text on light background)~~
+**Solution Implemented**:
+- ✅ Added ThemeManager class for automatic dark mode detection
+- ✅ Dynamic color schemes for both light and dark modes
+- ✅ LoginDialog adapts to system theme automatically
+- ✅ Main application window adapts to system theme
+- ✅ Proper contrast in all modes (light and dark)
+- ✅ Maintains Haio green branding (#4CAF50)
 
-**Files to Update**:
-- `main_new.py` - LoginDialog class (lines ~2100-2400)
+**Files Updated**:
+- ✅ `main_new.py` - Added ThemeManager, updated LoginDialog and HaioDriveClient styling
 
-**Design Goals**:
-- Clean, modern appearance
-- High contrast for readability
-- Consistent with app branding (Haio green #4CAF50)
-- Professional and user-friendly
+**Testing Remaining**:
+- [ ] Test on Windows with dark mode enabled
+- [ ] Test on Linux with dark GTK theme
+- [ ] Verify all UI elements are readable in both modes
 
 ---
 
