@@ -17,8 +17,112 @@ from PyQt6.QtWidgets import (
     QSizePolicy, QDialog, QDialogButtonBox, QFormLayout, QStatusBar,
     QListWidget, QListWidgetItem, QInputDialog
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QPropertyAnimation, QEasingCurve, QRect, QSize, QMetaObject, Q_ARG
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QPropertyAnimation, QEasingCurve, QRect, QSize, QMetaObject, Q_ARG, QSettings
 from PyQt6.QtGui import QFont, QIcon, QPalette, QColor, QPixmap, QPainter, QLinearGradient, QBrush, QAction, QPainterPath
+
+
+class ThemeManager:
+    """Manages application theme and detects system dark mode."""
+    
+    def __init__(self):
+        self.is_dark = self.detect_dark_mode()
+    
+    def detect_dark_mode(self) -> bool:
+        """Detect if system is in dark mode."""
+        system = platform.system()
+        
+        if system == "Windows":
+            return self._detect_windows_dark_mode()
+        elif system == "Darwin":  # macOS
+            return self._detect_macos_dark_mode()
+        else:  # Linux
+            return self._detect_linux_dark_mode()
+    
+    def _detect_windows_dark_mode(self) -> bool:
+        """Detect Windows dark mode via registry."""
+        try:
+            import winreg
+            key = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+            )
+            value, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+            winreg.CloseKey(key)
+            return value == 0  # 0 = dark mode, 1 = light mode
+        except Exception:
+            return False
+    
+    def _detect_macos_dark_mode(self) -> bool:
+        """Detect macOS dark mode."""
+        try:
+            import subprocess
+            result = subprocess.run(
+                ['defaults', 'read', '-g', 'AppleInterfaceStyle'],
+                capture_output=True, text=True, timeout=2
+            )
+            return 'Dark' in result.stdout
+        except Exception:
+            return False
+    
+    def _detect_linux_dark_mode(self) -> bool:
+        """Detect Linux/GTK dark mode preference."""
+        try:
+            # Try Qt settings first
+            settings = QSettings()
+            palette_variant = settings.value("QPalette")
+            if palette_variant:
+                app = QApplication.instance()
+                if app:
+                    palette = app.palette()
+                    # Check if window background is darker than text
+                    bg = palette.color(QPalette.ColorRole.Window)
+                    fg = palette.color(QPalette.ColorRole.WindowText)
+                    return bg.lightness() < fg.lightness()
+            
+            # Fallback: check GTK theme
+            import subprocess
+            result = subprocess.run(
+                ['gsettings', 'get', 'org.gnome.desktop.interface', 'gtk-theme'],
+                capture_output=True, text=True, timeout=2
+            )
+            theme = result.stdout.strip().lower()
+            return 'dark' in theme
+        except Exception:
+            return False
+    
+    def get_colors(self):
+        """Get color scheme based on theme."""
+        if self.is_dark:
+            return {
+                'bg': '#1e1e1e',
+                'bg_alt': '#2d2d2d',
+                'bg_widget': '#252525',
+                'text': '#e0e0e0',
+                'text_secondary': '#b0b0b0',
+                'border': '#404040',
+                'primary': '#4CAF50',
+                'primary_hover': '#45a049',
+                'input_bg': '#2d2d2d',
+                'input_border': '#404040',
+                'error_bg': '#3d2020',
+                'error_border': '#5c3030',
+            }
+        else:
+            return {
+                'bg': '#ffffff',
+                'bg_alt': '#f5f6fa',
+                'bg_widget': '#ffffff',
+                'text': '#2c3e50',
+                'text_secondary': '#7f8c8d',
+                'border': '#e0e0e0',
+                'primary': '#4CAF50',
+                'primary_hover': '#45a049',
+                'input_bg': '#fafafa',
+                'input_border': '#e0e0e0',
+                'error_bg': '#fdf2f2',
+                'error_border': '#f5c6cb',
+            }
+
 
 class ApiError(Exception):
     pass
@@ -2088,6 +2192,10 @@ class LoginDialog(QDialog):
         # Authentication worker
         self.auth_worker = None
         
+        # Initialize theme manager
+        self.theme = ThemeManager()
+        self.colors = self.theme.get_colors()
+        
         self.setup_ui()
         self.setup_styling()
         
@@ -2345,33 +2453,34 @@ class LoginDialog(QDialog):
         self.error_label.setText("")
     
     def setup_styling(self):
-        self.setStyleSheet("""
-            QDialog {
+        c = self.colors  # Shorthand for colors
+        self.setStyleSheet(f"""
+            QDialog {{
                 background-color: transparent;
-            }
+            }}
             
-            QFrame#mainFrame {
-                background-color: white;
+            QFrame#mainFrame {{
+                background-color: {c['bg']};
                 border-radius: 15px;
-                border: 1px solid #e0e0e0;
-            }
+                border: 1px solid {c['border']};
+            }}
             
-            QLabel#title {
+            QLabel#title {{
                 font-size: 22px;
                 font-weight: bold;
-                color: #2c3e50;
+                color: {c['text']};
                 margin-bottom: 5px;
                 padding: 5px 0px;
-            }
+            }}
             
-            QLabel#subtitle {
+            QLabel#subtitle {{
                 font-size: 13px;
-                color: #7f8c8d;
+                color: {c['text_secondary']};
                 padding: 2px 0px;
-            }
+            }}
             
-            QLabel#fieldLabel {
-                color: #2c3e50;
+            QLabel#fieldLabel {{
+                color: {c['text']};
                 font-weight: bold;
                 font-size: 13px;
                 margin-bottom: 3px;
@@ -2379,63 +2488,63 @@ class LoginDialog(QDialog):
                 background-color: transparent;
                 min-height: 20px;
                 max-height: 20px;
-            }
+            }}
             
-            QLineEdit#input {
-                border: 2px solid #e0e0e0;
+            QLineEdit#input {{
+                border: 2px solid {c['input_border']};
                 border-radius: 8px;
                 padding: 10px 12px;
                 font-size: 14px;
-                background-color: #fafafa;
-                color: #2c3e50;
+                background-color: {c['input_bg']};
+                color: {c['text']};
                 margin: 1px 0px;
                 min-height: 20px;
                 max-height: 40px;
-            }
+            }}
             
-            QLineEdit#input:focus {
-                border-color: #4CAF50;
-                background-color: white;
+            QLineEdit#input:focus {{
+                border-color: {c['primary']};
+                background-color: {c['bg_widget']};
                 outline: none;
-            }
+            }}
             
-            QCheckBox#checkbox {
-                color: #34495e;
+            QCheckBox#checkbox {{
+                color: {c['text']};
                 font-size: 13px;
                 margin-top: 3px;
                 padding: 5px 0px;
                 spacing: 8px;
                 min-height: 25px;
                 max-height: 25px;
-            }
+            }}
             
-            QCheckBox#checkbox::indicator {
+            QCheckBox#checkbox::indicator {{
                 width: 16px;
                 height: 16px;
-                border: 2px solid #e0e0e0;
+                border: 2px solid {c['input_border']};
                 border-radius: 4px;
-                background-color: white;
+                background-color: {c['bg_widget']};
                 margin-right: 8px;
-            }
+            }}
             
-            QCheckBox#checkbox::indicator:checked {
-                background-color: #4CAF50;
-                border-color: #4CAF50;
+            QCheckBox#checkbox::indicator:checked {{
+                background-color: {c['primary']};
+                border-color: {c['primary']};
                 image: url(none);
-            }
+            }}
             
-            QLabel#errorLabel {
+            QLabel#errorLabel {{
                 color: #e74c3c;
-                background-color: #fdf2f2;
-                border: 1px solid #f5c6cb;
+                background-color: {c['error_bg']};
+                border: 1px solid {c['error_border']};
                 border-radius: 6px;
                 padding: 8px;
                 margin: 5px 0px;
                 font-size: 12px;
-            }
+            }}
             
-            QPushButton#loginButton {
-                background-color: #4CAF50;
+            QPushButton#loginButton {{
+                background-color: {c['primary']};
                 color: white;
                 border: none;
                 border-radius: 8px;
@@ -2445,37 +2554,37 @@ class LoginDialog(QDialog):
                 min-width: 100px;
                 min-height: 42px;
                 max-height: 42px;
-            }
+            }}
             
-            QPushButton#loginButton:hover {
-                background-color: #45a049;
-            }
+            QPushButton#loginButton:hover {{
+                background-color: {c['primary_hover']};
+            }}
             
-            QPushButton#loginButton:pressed {
+            QPushButton#loginButton:pressed {{
                 background-color: #3d8b40;
-            }
+            }}
             
-            QPushButton#cancelButton {
+            QPushButton#cancelButton {{
                 background-color: transparent;
-                color: #7f8c8d;
-                border: 2px solid #e0e0e0;
+                color: {c['text_secondary']};
+                border: 2px solid {c['border']};
                 border-radius: 8px;
                 padding: 12px 24px;
                 font-size: 14px;
                 min-width: 100px;
                 min-height: 42px;
                 max-height: 42px;
-            }
+            }}
             
-            QPushButton#cancelButton:hover {
-                border-color: #bdc3c7;
-                color: #34495e;
-                background-color: #f8f9fa;
-            }
+            QPushButton#cancelButton:hover {{
+                border-color: {c['text_secondary']};
+                color: {c['text']};
+                background-color: {c['bg_alt']};
+            }}
             
-            QPushButton#cancelButton:pressed {
-                background-color: #e9ecef;
-            }
+            QPushButton#cancelButton:pressed {{
+                background-color: {c['bg_widget']};
+            }}
         """)
     
     def get_credentials(self):
@@ -2495,6 +2604,10 @@ class HaioDriveClient(QMainWindow):
         self.api_client = ApiClient()
         self.rclone_manager = RcloneManager()
         self.token_manager = TokenManager()
+        
+        # Initialize theme manager
+        self.theme = ThemeManager()
+        self.colors = self.theme.get_colors()
         
         # Set application icon
         self.set_application_icon()
@@ -2905,37 +3018,38 @@ class HaioDriveClient(QMainWindow):
         return page
     
     def setup_styling(self):
-        """Apply application styling."""
-        self.setStyleSheet("""
-            QMainWindow {
-                background-color: #f5f6fa;
-            }
+        """Apply application styling with theme support."""
+        c = self.colors  # Shorthand for colors
+        self.setStyleSheet(f"""
+            QMainWindow {{
+                background-color: {c['bg_alt']};
+            }}
             
-            QFrame#header {
+            QFrame#header {{
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #4CAF50, stop:1 #45a049);
+                    stop:0 {c['primary']}, stop:1 {c['primary_hover']});
                 border-bottom: 3px solid #3d8b40;
-            }
+            }}
             
-            QFrame#logoContainer {
+            QFrame#logoContainer {{
                 background-color: rgba(255, 255, 255, 0.1);
                 border-radius: 32px;
                 border: 2px solid rgba(255, 255, 255, 0.2);
-            }
+            }}
             
-            QLabel#appTitle {
+            QLabel#appTitle {{
                 color: white;
                 font-size: 20px;
                 font-weight: bold;
-            }
+            }}
             
-            QLabel#userLabel {
+            QLabel#userLabel {{
                 color: #e8f5e8;
                 font-size: 13px;
                 font-weight: 500;
-            }
+            }}
             
-            QPushButton#headerButton {
+            QPushButton#headerButton {{
                 background-color: rgba(255, 255, 255, 0.15);
                 color: white;
                 border: 2px solid rgba(255, 255, 255, 0.3);
@@ -2945,45 +3059,46 @@ class HaioDriveClient(QMainWindow):
                 font-size: 13px;
                 margin: 0 2px;
                 min-width: 90px;
-            }
+            }}
             
-            QPushButton#headerButton:hover {
+            QPushButton#headerButton:hover {{
                 background-color: rgba(255, 255, 255, 0.25);
                 border-color: rgba(255, 255, 255, 0.5);
-            }
+            }}
             
-            QPushButton#headerButton:pressed {
+            QPushButton#headerButton:pressed {{
                 background-color: rgba(255, 255, 255, 0.1);
-            }
+            }}
             
-            QLabel#loadingLabel {
+            QLabel#loadingLabel {{
                 font-size: 16px;
-                color: #34495e;
-            }
+                color: {c['text']};
+            }}
             
-            QLabel#pageTitle {
+            QLabel#pageTitle {{
                 font-size: 24px;
                 font-weight: bold;
-                color: #2c3e50;
+                color: {c['text']};
                 margin-bottom: 20px;
-            }
+            }}
             
-            QScrollArea#bucketsScrollArea {
+            QScrollArea#bucketsScrollArea {{
                 border: none;
                 background-color: transparent;
-            }
+            }}
             
-            QProgressBar {
-                border: 2px solid #e0e0e0;
+            QProgressBar {{
+                border: 2px solid {c['border']};
                 border-radius: 8px;
                 text-align: center;
-                background-color: #f8f9fa;
-            }
+                background-color: {c['bg_widget']};
+                color: {c['text']};
+            }}
             
-            QProgressBar::chunk {
-                background-color: #4CAF50;
+            QProgressBar::chunk {{
+                background-color: {c['primary']};
                 border-radius: 6px;
-            }
+            }}
         """)
     
     def try_auto_login(self):
@@ -3424,7 +3539,7 @@ def main():
     # Normal GUI mode
     app = QApplication(sys.argv)
     app.setApplicationName("Haio Smart Solutions Client")
-    app.setApplicationVersion("2.0")
+    app.setApplicationVersion("1.5.2")
     app.setOrganizationName("Haio")
     window = HaioDriveClient()
     sys.exit(app.exec())
