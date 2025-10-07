@@ -24,8 +24,26 @@ from PyQt6.QtGui import QFont, QIcon, QPalette, QColor, QPixmap, QPainter, QLine
 class ThemeManager:
     """Manages application theme and detects system dark mode."""
     
-    def __init__(self):
+    def __init__(self, app=None):
+        self.app = app
         self.is_dark = self.detect_dark_mode()
+        
+        # Set up theme change monitoring
+        if self.app and platform.system() == "Linux":
+            # Monitor palette changes for Linux
+            self.app.paletteChanged.connect(self.on_theme_changed)
+    
+    def on_theme_changed(self):
+        """Handle system theme change."""
+        old_dark = self.is_dark
+        self.is_dark = self.detect_dark_mode()
+        
+        # If theme changed, notify all windows to refresh
+        if old_dark != self.is_dark:
+            if self.app:
+                for widget in self.app.topLevelWidgets():
+                    if hasattr(widget, 'apply_theme'):
+                        widget.apply_theme()
     
     def detect_dark_mode(self) -> bool:
         """Detect if system is in dark mode."""
@@ -950,15 +968,18 @@ class RcloneManager:
             service_content = f"""[Unit]
 Description=Haio Drive Mount - {bucket_name}
 After=network-online.target
+Wants=network-online.target
 
 [Service]
+Type=notify
 Environment=DrivePathDirectory="{mount_point}"
 Environment=CachePathDirectory="{self.cache_dir}"
 Environment=RcloneConfig="{self.config_path}"
 Environment=ConfigName="{config_name}"
 Environment=ContainerName="{bucket_name}"
 
-Type=simple
+ExecStartPre=/bin/mkdir -p "${{DrivePathDirectory}}"
+ExecStartPre=/bin/mkdir -p "${{CachePathDirectory}}"
 ExecStart={self.rclone_executable} mount \\
         --allow-non-empty \\
         --dir-cache-time 10s \\
@@ -971,13 +992,22 @@ ExecStart={self.rclone_executable} mount \\
         --attr-timeout 1m \\
         --cache-dir "${{CachePathDirectory}}" \\
         --config "${{RcloneConfig}}" \\
+        --log-level INFO \\
         "${{ConfigName}}:${{ContainerName}}" "${{DrivePathDirectory}}"
 ExecStop=/bin/bash -c 'fusermount -u "${{DrivePathDirectory}}" || umount -l "${{DrivePathDirectory}}"'
-Restart=always
+
+# Restart configuration
+Restart=on-failure
 RestartSec=10
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+# Resource limits
+TimeoutStartSec=30
+TimeoutStopSec=10
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target
 """
             
             # Ask for password using GUI
@@ -1414,16 +1444,14 @@ class TokenManager:
                 if 'password' in data[username]:
                     del data[username]['password']
             else:
-                # Prefer OS keyring on non-Windows
-                try:
-                    import keyring
-                    keyring.set_password('haio-smartapp', username, password)
-                    # remove any legacy plaintext
-                    if 'password' in data[username]:
-                        del data[username]['password']
-                except Exception as e:
-                    print(f"Keyring save failed, falling back to plaintext: {e}")
-                    data[username]['password'] = password
+                # Use base64 encoding for Linux/Mac (simple obfuscation)
+                # Not as secure as Windows DPAPI but better than plaintext
+                import base64
+                enc_password = base64.b64encode(password.encode('utf-8')).decode('ascii')
+                data[username]['password_enc'] = enc_password
+                # remove any legacy plaintext
+                if 'password' in data[username]:
+                    del data[username]['password']
 
             with open(self.token_file, 'w') as f:
                 json.dump(data, f, indent=2)
@@ -1446,27 +1474,15 @@ class TokenManager:
                 if 'password_enc' in entry:
                     return self._win_decrypt(entry['password_enc'])
                 return entry.get('password')
-            # Non-Windows: try keyring first
-            try:
-                import keyring
-                secret = keyring.get_password('haio-smartapp', username)
-                if secret:
-                    # if legacy plaintext exists, clean it up silently
-                    if 'password' in entry:
-                        del entry['password']
-                        # Reload current on-disk data (if any), update this user, then write back
-                        try:
-                            with open(self.token_file, 'r') as rf:
-                                current = json.load(rf)
-                        except Exception:
-                            current = {}
-                        current[username] = entry
-                        with open(self.token_file, 'w') as fw:
-                            json.dump(current, fw, indent=2)
-                    return secret
-            except Exception as e:
-                print(f"Keyring get failed, trying plaintext fallback: {e}")
-            return entry.get('password')
+            else:
+                # Linux/Mac: decode base64
+                if 'password_enc' in entry:
+                    import base64
+                    try:
+                        return base64.b64decode(entry['password_enc'].encode('ascii')).decode('utf-8')
+                    except Exception as e:
+                        print(f"Error decoding password: {e}")
+                return entry.get('password')
         except Exception as e:
             print(f"Error loading password: {e}")
             return None
@@ -2605,9 +2621,9 @@ class HaioDriveClient(QMainWindow):
         self.rclone_manager = RcloneManager()
         self.token_manager = TokenManager()
         
-        # Initialize theme manager
-        self.theme = ThemeManager()
-        self.colors = self.theme.get_colors()
+        # Initialize theme manager (will be properly initialized after QApplication)
+        self.theme = None
+        self.colors = None
         
         # Set application icon
         self.set_application_icon()
@@ -2622,12 +2638,25 @@ class HaioDriveClient(QMainWindow):
         # Store active workers to prevent premature destruction
         self.active_workers = []
         
+        # Initialize theme after QApplication is available
+        self.theme = ThemeManager(QApplication.instance())
+        self.colors = self.theme.get_colors()
+        
         self.setup_ui()
         self.setup_styling()
         
         # Auto-login if credentials are saved
         # Don't show window initially - show only after login
         self.try_auto_login()
+    
+    def apply_theme(self):
+        """Reapply theme when system theme changes."""
+        self.colors = self.theme.get_colors()
+        self.setup_styling()
+        
+        # Refresh all bucket widgets
+        for widget in self.bucket_widgets:
+            widget.update()
     
     def set_application_icon(self):
         """Set the application icon for window and taskbar."""
@@ -3176,6 +3205,7 @@ class HaioDriveClient(QMainWindow):
     def load_buckets(self):
         """Load user's buckets."""
         self.status_bar.showMessage("Loading buckets...")
+        self.content_stack.setCurrentWidget(self.loading_page)
         
         # Create and start bucket loading worker
         self.bucket_worker = BucketWorker(self.api_client)
@@ -3184,14 +3214,27 @@ class HaioDriveClient(QMainWindow):
     
     def on_buckets_loaded(self, buckets: List[Dict]):
         """Handle buckets loading completion."""
+        if buckets is None:
+            # API call failed, show error
+            self.status_bar.showMessage("Failed to load buckets - retrying...")
+            QMessageBox.warning(self, "Connection Error", 
+                              "Failed to load buckets. Please check your internet connection.\n\n"
+                              "Click OK to retry.")
+            # Retry after 2 seconds
+            QTimer.singleShot(2000, self.load_buckets)
+            return
+        
         self.buckets = buckets
         self.display_buckets()
     
     def display_buckets(self):
         """Display buckets in the UI."""
-        # Clear existing widgets
-        for widget in self.bucket_widgets:
-            widget.deleteLater()
+        # Clear existing widgets AND remove any empty state labels
+        while self.buckets_layout.count() > 1:  # Keep the stretch at the end
+            item = self.buckets_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        
         self.bucket_widgets.clear()
         
         # Add bucket widgets
@@ -3208,8 +3251,9 @@ class HaioDriveClient(QMainWindow):
         self.scan_existing_mounts()
         
         if not self.buckets:
-            # Show empty state
+            # Show empty state (only if no widgets exist)
             empty_label = QLabel("No buckets found.\nCreate buckets using the web interface.")
+            empty_label.setObjectName("emptyStateLabel")
             empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             empty_label.setStyleSheet("color: #7f8c8d; font-size: 16px; margin: 50px;")
             self.buckets_layout.insertWidget(0, empty_label)
