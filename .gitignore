@@ -4,87 +4,14 @@ __pycache__/
 *$py.class
 *.so
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-MANIFEST
 
-# PyInstaller
-*.manifest
-*.spec
-
-# Windows Build Files
-build_windows*.bat
-build_windows*.ps1
-build_launcher.bat
-build_simple.bat
-windows_diagnostic.bat
-simple_diagnostic.bat
-s3_mounter_windows*.spec
-build_windows_vm.md
-
-# Build and Package Scripts
-create_final_package.sh
-package_for_windows.sh
-build_release.bat
-build_release.sh
-setup_windows.bat
-setup_linux.sh
-build_linux_compat.sh
-build_docker_debian12.sh
-build_appimage.sh
-
-# Build Packages and Archives
-smarthaioapp-windows*.zip
-smarthaioapp-*-build.zip
-smarthaioapp-*-FINAL.zip
-
-# Windows Installer Files
-*.msi
-winfsp-installer.msi
-
-# Temporary Build Directories
-smarthaioapp-windows-build/
-smarthaioapp-windows-final/
-HaioSmartApp.AppDir/
-dist-debian12/
-venv_compat/
-
-# AppImage tools
-*.AppImage
-linuxdeploy-*.AppImage
-
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
-.pytest_cache/
-cover/
+# Build outputs
+build/
+dist/
+*.spec.bak
 
 # Virtual environments
 venv/
@@ -103,47 +30,34 @@ build_env/
 
 # OS
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
 Thumbs.db
 
 # Application specific
 *.log
-*.conf
 cache/
 temp/
 tmp/
 
-# Rclone
-rclone.exe
-rclone
-rclone-v*-*.zip
-rclone-*-windows-*.zip
-
-# Downloaded Dependencies
-winfsp-*.msi
-*.msi
-
 # Build artifacts
+*.AppImage
 *.deb
 *.rpm
 *.dmg
-*.app
-*.exe
 HaioDriveClient
 HaioSmartApp
 HaioSmartApp.exe
 
-# Config files that might contain sensitive data
+# Config files with sensitive data
 tokens.json
 credentials.json
 config.ini
+settings.ini
 
-# PyQt UI files
-*.ui
+# Test coverage
+.coverage
+htmlcov/
+.pytest_cache/
+.hypothesis/
 
 # Temporary files
 *.tmp
