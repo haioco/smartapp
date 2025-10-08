@@ -22,9 +22,9 @@ from PyQt6.QtGui import QFont, QIcon, QPalette, QColor, QPixmap, QPainter, QLine
 
 # Import TempURL and sharing components
 try:
-    from tempurl_manager import TempURLManager
-    from share_dialog import ShareDialog, BulkShareDialog
-    from bucket_browser import BucketBrowserDialog
+    from src.features.tempurl_manager import TempURLManager
+    from src.ui.dialogs.share_dialog import ShareDialog, BulkShareDialog
+    from src.ui.dialogs.bucket_browser import BucketBrowserDialog
     TEMPURL_AVAILABLE = True
 except ImportError as e:
     print(f"TempURL feature not available: {e}")

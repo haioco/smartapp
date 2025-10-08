@@ -114,8 +114,8 @@ if platform.system() == "Windows":
 # Platform-specific binaries and data files
 binaries = []
 datas = [
-    ('haio-logo.png', '.'),
-    ('haio-logo.svg', '.'),
+    ('../../resources/icons/haio-logo.png', '.'),
+    ('../../resources/icons/haio-logo.svg', '.'),
 ]
 
 if platform.system() == "Windows":
@@ -133,7 +133,7 @@ elif platform.system() == "Linux":
         binaries.append(("rclone", '.'))
 
 a = Analysis(
-    ['main_new.py'],
+    ['../../src/main.py'],
     pathex=[],
     binaries=binaries,
     datas=datas,

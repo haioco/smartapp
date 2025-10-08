@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QSettings
 from PyQt6.QtGui import QFont, QPixmap
-from tempurl_manager import TempURLManager
+from src.features.tempurl_manager import TempURLManager
 
 
 class ShareDialog(QDialog):
@@ -69,7 +69,7 @@ class ShareDialog(QDialog):
         
         # Get theme colors
         try:
-            from main_new import ThemeManager
+            from src.main import ThemeManager
             theme = ThemeManager()
             colors = theme.get_colors()
         except:

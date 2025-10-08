@@ -90,9 +90,10 @@ download_winfsp()
 
 # Windows-specific binaries and data files
 binaries = []
+# Data files
 datas = [
-    ('haio-logo.png', '.'),
-    ('haio-logo.svg', '.'),
+    ('../../resources/icons/haio-logo.png', '.'),
+    ('../../resources/icons/haio-logo.svg', '.'),
 ]
 
 # Include rclone.exe for Windows
@@ -108,7 +109,7 @@ if os.path.exists("winfsp-installer.msi"):
 print("=== Building Windows Application ===")
 
 a = Analysis(
-    ['main_new.py'],
+    ['../../src/main.py'],
     pathex=[],
     binaries=binaries,
     datas=datas,

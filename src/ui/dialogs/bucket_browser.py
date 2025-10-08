@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QCursor, QIcon
-from share_dialog import ShareDialog, BulkShareDialog
+from .share_dialog import ShareDialog, BulkShareDialog
 
 
 class ObjectListLoader(QThread):
@@ -58,7 +58,7 @@ class BucketBrowserDialog(QDialog):
         
         # Get theme colors from parent or use default detection
         try:
-            from main_new import ThemeManager
+            from src.main import ThemeManager
             theme = ThemeManager()
             colors = theme.get_colors()
         except:
