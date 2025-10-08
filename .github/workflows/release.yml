@@ -43,7 +43,8 @@ jobs:
     
     - name: Create Windows release archive
       run: |
-        Compress-Archive -Path "dist\*" -DestinationPath "haio-drive-client-windows.zip"
+        cd platforms/windows
+        Compress-Archive -Path "dist\*" -DestinationPath "..\..\haio-drive-client-windows.zip"
       shell: powershell
     
     - name: Upload Windows artifact
@@ -87,7 +88,8 @@ jobs:
     
     - name: Create Linux release archive
       run: |
-        tar -czf haio-drive-client-linux.tar.gz -C dist .
+        cd platforms/linux
+        tar -czf ../../haio-drive-client-linux.tar.gz -C dist .
     
     - name: Upload Linux artifact
       uses: actions/upload-artifact@v4
