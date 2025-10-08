@@ -38,7 +38,8 @@ jobs:
     
     - name: Build Windows executable
       run: |
-        pyinstaller s3_mounter.spec --clean
+        cd platforms/windows
+        pyinstaller s3_mounter_windows.spec --clean
     
     - name: Create Windows release archive
       run: |
@@ -81,6 +82,7 @@ jobs:
     
     - name: Build Linux executable
       run: |
+        cd platforms/linux
         pyinstaller s3_mounter.spec --clean
     
     - name: Create Linux release archive

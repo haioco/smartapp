@@ -27,7 +27,8 @@ jobs:
     
     - name: Build Windows executable
       run: |
-        python -m PyInstaller s3_mounter_windows_simple.spec --clean --noconfirm
+        cd platforms/windows
+        python -m PyInstaller s3_mounter_windows.spec --clean --noconfirm
     
     - name: Upload Windows artifact
       uses: actions/upload-artifact@v4
@@ -53,8 +54,9 @@ jobs:
     
     - name: Build Linux executable (Normal)
       run: |
+        cd platforms/linux
         pyinstaller s3_mounter.spec --clean --noconfirm
-        mv dist/HaioSmartApp dist/HaioSmartApp-linux-x64
+        mv ../../dist/HaioSmartApp ../../dist/HaioSmartApp-linux-x64
     
     - name: Upload Linux Normal artifact
       uses: actions/upload-artifact@v4
@@ -90,12 +92,13 @@ jobs:
     
     - name: Build Linux executable (Compatible)
       run: |
+        cd platforms/linux
         pyinstaller s3_mounter.spec \
           --clean \
           --noconfirm \
           --exclude-module=_tkinter \
           --exclude-module=tkinter
-        mv dist/HaioSmartApp dist/HaioSmartApp-linux-compat
+        mv ../../dist/HaioSmartApp ../../dist/HaioSmartApp-linux-compat
     
     - name: Check GLIBC requirements
       run: |
@@ -130,17 +133,17 @@ jobs:
         
         WORKDIR /app
         COPY requirements.txt .
-        COPY main_new.py .
-        COPY s3_mounter.spec .
-        COPY haio-logo.png .
-        COPY haio-logo.svg .
+        COPY src/ src/
+        COPY platforms/linux/s3_mounter.spec platforms/linux/
+        COPY resources/icons/ resources/icons/
         
         RUN python3 -m pip install --upgrade pip
         RUN python3 -m pip install -r requirements.txt
         RUN python3 -m pip install pyinstaller
         
+        WORKDIR /app/platforms/linux
         RUN pyinstaller s3_mounter.spec --clean --noconfirm
-        RUN mv dist/HaioSmartApp dist/HaioSmartApp-debian12
+        RUN mv ../../dist/HaioSmartApp ../../dist/HaioSmartApp-debian12
         EOF
         
         # Build Docker image and extract executable
