@@ -34,8 +34,28 @@ cd smartapp/client
 
 # Install dependencies
 pip install -r requirements.txt
+```
 
-# Run the application
+### Running the Application
+
+There are three ways to run the application:
+
+**Option 1: Using the launcher script (Recommended)**
+```bash
+# Linux/macOS
+./run.sh
+
+# Or using Python directly
+python run.py
+```
+
+**Option 2: Running as a Python module**
+```bash
+python -m src.main
+```
+
+**Option 3: Direct execution (after installing as package)**
+```bash
 python src/main.py
 ```
 
